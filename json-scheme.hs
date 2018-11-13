@@ -16,6 +16,14 @@ import GHC.Exts (sortWith)
 --import Data.Typeable
 --import Data.Data (Data)
 
+class MultilingualShow a where
+    showZh :: a -> String
+    showEn :: a -> String
+    printZh :: a -> IO ()
+    printZh = putStrLn . showZh
+    printEn :: a -> IO ()
+    printEn = putStrLn . showEn
+
 compareSortedListWith :: Ord b => (a -> b) -> [a] -> [a] -> ([(a, a)], [a], [a])
 compareSortedListWith = undefined
 
@@ -79,8 +87,8 @@ example tr = case tr of
     NamedTuple ps -> JsonObject [(k, example t) | (k, t) <- ps]
     TextMap t -> JsonObject [("k", example t)]
     Refined t _ -> error "Shape should not contain Refined"
-    Ref name -> error "Shapeshould not contain Ref"
-    Or a b -> error "Shapeshould not contain Or"
+    Ref name -> error "Shape should not contain Ref"
+    Or a b -> error "Shape should not contain Or"
     Alternative a b _ -> example a
 
 extendObject :: JsonData -> JsonData -> JsonData
@@ -285,7 +293,7 @@ shapeOverlap tr1 tr2 = case (tr1, tr2) of
 
 -- matchSpec
 
-data MatchResult = Matched | UnMatched UnMatchedReason
+data MatchResult = Matched | UnMatched UnMatchedReason deriving (Show)
 data UnMatchedReason =
       ShapeNotMatch CheckedSpec JsonData
     | ConstValueNotEqual CheckedSpec JsonData
@@ -295,12 +303,54 @@ data UnMatchedReason =
     | NamedTupleFieldNotMatch String UnMatchedReason
     | TextMapElementNotMatch String UnMatchedReason
     | RefinedShapeNotMatch UnMatchedReason
-    | RefinedPropNotMatch CheckedSpec JsonData
+    | RefinedPropNotMatch CheckedSpec JsonData --TODO: add prop description sentence
     | OrMatchNothing CheckedSpec JsonData
     | OrNotMatchLeft UnMatchedReason
     | OrNotMatchRight UnMatchedReason
-    | NamedTypeNotMatch Name UnMatchedReason
+    | RefNotMatch Name UnMatchedReason
     deriving (Show)
+
+isIdentifier :: String -> Bool
+isIdentifier _ = True
+
+explain :: UnMatchedReason -> (String, CheckedSpec, JsonData, String, String)
+explain reason = iter reason "" "" "" where
+    iter reason direct specPath dataPath = case reason of
+        ShapeNotMatch sp d -> ("ShapeNotMatch", sp, d, specPath, dataPath)
+        ConstValueNotEqual sp d -> ("ConstValueNotEqual", sp, d, specPath, dataPath)
+        TupleLengthNotMatch sp d -> ("TupleLengthNotMatch", sp, d, specPath, dataPath)
+        TupleFieldNotMatch i r -> iter r direct ("(" ++ show i ++ ")" ++ specPath) ("[" ++ show i ++ "]" ++ dataPath)
+        ArrayElementNotMatch i r -> iter r direct ("[" ++ show i ++ "]" ++ specPath) ("[" ++ show i ++ "]" ++ dataPath)
+        NamedTupleFieldNotMatch k r -> iter r direct ("(" ++ show k ++ ")" ++ specPath) ((if isIdentifier k then "." ++ k else "[" ++ show k ++ "]") ++ dataPath)
+        TextMapElementNotMatch k r -> iter r direct ("[" ++ show k ++ "]" ++ specPath) ("[" ++ show k ++ "]" ++ dataPath)
+        RefinedShapeNotMatch r -> iter r direct ("<refined>" ++ specPath) dataPath
+        RefinedPropNotMatch sp d -> ("RefinedPropNotMatch", sp, d, specPath, dataPath)
+        OrMatchNothing sp d -> ("OrMatchNothing", sp, d, specPath, dataPath)
+        OrNotMatchLeft r -> iter r direct ("<left>" ++ specPath) (dataPath)
+        OrNotMatchRight r -> iter r direct ("<right>" ++ specPath) (dataPath)
+        RefNotMatch name r ->  iter r direct ("{" ++ name ++ "}" ++ specPath) (dataPath)
+
+instance MultilingualShow UnMatchedReason where
+    showEn r =
+        let (direct, sp, d, specPath, dataPath) = explain r
+        in "  Direct Cause: " ++ direct ++
+            "\n    Spec: " ++ show sp ++
+            "\n    Data: " ++ show d ++
+            "\n  Spec Path: spec" ++ specPath ++
+            "\n  Data Path: data" ++ dataPath
+    showZh r =
+        let (direct, sp, d, specPath, dataPath) = explain r
+        in "  直接原因: " ++ direct ++
+            "\n    规格: " ++ show sp ++
+            "\n    数据: " ++ show d ++
+            "\n  规格路径: spec" ++ specPath ++
+            "\n  数据路径: data" ++ dataPath
+
+instance MultilingualShow MatchResult where
+    showEn Matched = "Matched"
+    showEn (UnMatched r) = "UnMatched !\n" ++ showEn r
+    showZh Matched = "匹配"
+    showZh (UnMatched r) = "不匹配 !\n" ++ showZh r
 
 otherwise :: Bool -> UnMatchedReason -> MatchResult
 b `otherwise` reason = if b then Matched else UnMatched reason
@@ -365,7 +415,7 @@ matchSpec env t d = let rec = matchSpec env in case (t, d) of
         MatchLeft -> wrap OrNotMatchLeft (rec t1 d)
         MatchRight -> wrap OrNotMatchRight (rec t2 d)
         MatchNothing -> UnMatched (OrMatchNothing t d)
-    (Ref name, d) -> wrap (NamedTypeNotMatch name) (rec (env M.! name) d) -- NOTICE: can fail if name not in env
+    (Ref name, d) -> wrap (RefNotMatch name) (rec (env M.! name) d) -- NOTICE: can fail if name not in env
     (t, d) -> matchShape t d
 
 matchSpec' :: Env CheckedSpec -> CheckedSpec -> JsonData -> Bool
@@ -398,8 +448,8 @@ main = do
             case checkEnv env of
                 Right env' -> do
                     traceM $ "GOT env': " ++ show env'
-                    print (matchSpec' env' ast' dat1)
-                    print (matchSpec' env' ast' dat2)
+                    printEn (matchSpec env' ast' dat1)
+                    printEn (matchSpec env' ast' dat2)
                 _ -> putStrLn "error"
         _ -> putStrLn "error"
 
