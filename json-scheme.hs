@@ -16,16 +16,31 @@ import GHC.Exts (sortWith)
 --import Data.Typeable
 --import Data.Data (Data)
 
-class MultilingualShow a where
+-- generic tools
+
+class Show a => MultilingualShow a where
     showZh :: a -> String
+    showZh = showEn
     showEn :: a -> String
+    showEn = show
     printZh :: a -> IO ()
     printZh = putStrLn . showZh
     printEn :: a -> IO ()
     printEn = putStrLn . showEn
 
+instance (MultilingualShow a, MultilingualShow b) => MultilingualShow (Either a b) where
+    showEn e = case e of Left x -> "Left " ++ showEn x; Right y -> "Right " ++ showEn y
+    showZh e = case e of Left x -> "Left " ++ showZh x; Right y -> "Right " ++ showZh y
+
 compareSortedListWith :: Ord b => (a -> b) -> [a] -> [a] -> ([(a, a)], [a], [a])
-compareSortedListWith = undefined
+compareSortedListWith key xs ys = iter xs ys [] [] [] where
+    iter xs ys both onlyXs onlyYs = case (xs, ys) of
+        ((x:xs'), (y:ys')) ->
+            if key x == key y then iter xs' ys' ((x, y):both) onlyXs onlyYs
+            else if key x < key y then iter xs' (y:ys') both (x:onlyXs) onlyYs
+            else {- key x > key y -} iter (x:xs') ys' both onlyXs (y:onlyYs)
+        ([], ys) -> (both, onlyXs, onlyYs ++ ys)
+        (xs, []) -> (both, onlyXs ++ xs, onlyYs)
 
 -- TypeRep & JsonData
 
@@ -91,9 +106,13 @@ example tr = case tr of
     Or a b -> error "Shape should not contain Or"
     Alternative a b _ -> example a
 
-extendObject :: JsonData -> JsonData -> JsonData
-extendObject (JsonObject ps1) (JsonObject ps2) = JsonObject (ps1 ++ ps2)
-extendObject _ _ = error "extendObject must be used on two JsonObject"
+extendObj :: JsonData -> JsonData -> JsonData
+extendObj (JsonObject ps1) (JsonObject ps2) = JsonObject (ps1 ++ ps2)
+extendObj _ _ = error "extendObj must be used on two JsonObject"
+
+lookupObj :: String -> JsonData -> JsonData
+lookupObj k (JsonObject kvs) = (fromMaybe JsonNull (M.lookup k (M.fromList kvs)))
+lookupObj _ _ = error "lookupObj must be used on JsonObject"
 
 instance Show TypeRep where
     show tr = case tr of
@@ -164,6 +183,10 @@ data CheckFailedReason =
     | InvalidItemInEnv Name CheckFailedReason
     deriving (Show)
 
+instance MultilingualShow CheckFailedReason where
+    showZh = show
+    showEn = show
+
 wrapL :: (a -> a) -> Either a b -> Either a b
 wrapL f e = case e of Left x -> Left (f x); Right y -> Right y
 
@@ -202,8 +225,8 @@ joinObjectComponents ((k, r):ps) = case (r, joinObjectComponents ps) of
     (Overlapping v1, MayOverlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
     (MayOverlapping v1, Overlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
     (MayOverlapping v1, MayOverlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
-    (_, NonOverlapping c2) -> NonOverlapping (\d -> case d of (JsonObject kvs) -> c2 (JsonObject kvs); _ -> MatchNothing) -- note that not remove k is correct
-    (NonOverlapping c1, _) -> NonOverlapping (\d -> case d of (JsonObject kvs) -> c1 (fromMaybe JsonNull (M.lookup k (M.fromList kvs))); _ -> MatchNothing)
+    (_, NonOverlapping c2) -> NonOverlapping (\d -> case d of (JsonObject _) -> c2 d; _ -> MatchNothing) -- note that not remove k is correct
+    (NonOverlapping c1, _) -> NonOverlapping (\d -> case d of (JsonObject _) -> c1 (lookupObj k d); _ -> MatchNothing)
 
 joinLeftOrPath :: ShapeRelation -> ShapeRelation -> ShapeRelation
 joinLeftOrPath r1 r2 = case (r1, r2) of
@@ -259,8 +282,8 @@ shapeOverlap tr1 tr2 = case (tr1, tr2) of
         -- NamedTuple is non-strict
         let (common, fstOnly, sndOnly) = compareSortedListWith fst (sortWith fst ps1) (sortWith fst ps2)
         in case joinObjectComponents [(k, shapeOverlap t1 t2) | ((k, t1), (_, t2)) <- common] of
-            Overlapping d -> Overlapping (extendObject d (example (NamedTuple (fstOnly ++ sndOnly))))
-            MayOverlapping d -> MayOverlapping (extendObject d (example (NamedTuple (fstOnly ++ sndOnly))))
+            Overlapping d -> Overlapping (extendObj d (example (NamedTuple (fstOnly ++ sndOnly))))
+            MayOverlapping d -> MayOverlapping (extendObj d (example (NamedTuple (fstOnly ++ sndOnly))))
             NonOverlapping c -> NonOverlapping c
     (NamedTuple ps1, TextMap t2) ->
         joinObjectComponents [(k, shapeOverlap t1 t2) | (k, t1) <- ps1]
@@ -315,36 +338,38 @@ isIdentifier _ = True
 
 explain :: UnMatchedReason -> (String, CheckedSpec, JsonData, String, String)
 explain reason = iter reason "" "" "" where
-    iter reason direct specPath dataPath = case reason of
+    iter reason dc specPath dataPath = case reason of
         ShapeNotMatch sp d -> ("ShapeNotMatch", sp, d, specPath, dataPath)
         ConstValueNotEqual sp d -> ("ConstValueNotEqual", sp, d, specPath, dataPath)
         TupleLengthNotMatch sp d -> ("TupleLengthNotMatch", sp, d, specPath, dataPath)
-        TupleFieldNotMatch i r -> iter r direct ("(" ++ show i ++ ")" ++ specPath) ("[" ++ show i ++ "]" ++ dataPath)
-        ArrayElementNotMatch i r -> iter r direct ("[" ++ show i ++ "]" ++ specPath) ("[" ++ show i ++ "]" ++ dataPath)
-        NamedTupleFieldNotMatch k r -> iter r direct ("(" ++ show k ++ ")" ++ specPath) ((if isIdentifier k then "." ++ k else "[" ++ show k ++ "]") ++ dataPath)
-        TextMapElementNotMatch k r -> iter r direct ("[" ++ show k ++ "]" ++ specPath) ("[" ++ show k ++ "]" ++ dataPath)
-        RefinedShapeNotMatch r -> iter r direct ("<refined>" ++ specPath) dataPath
+        TupleFieldNotMatch i r -> iter r dc (specPath ++ "(" ++ show i ++ ")") (dataPath ++ "[" ++ show i ++ "]")
+        ArrayElementNotMatch i r -> iter r dc (specPath ++ "[" ++ show i ++ "]") (dataPath ++ "[" ++ show i ++ "]")
+        NamedTupleFieldNotMatch k r -> iter r dc (specPath ++ "(" ++ show k ++ ")") (dataPath ++ (if isIdentifier k then "." ++ k else "[" ++ show k ++ "]"))
+        TextMapElementNotMatch k r -> iter r dc (specPath ++ "[" ++ show k ++ "]") (dataPath ++ "[" ++ show k ++ "]")
+        RefinedShapeNotMatch r -> iter r dc (specPath ++ "<refined>") dataPath
         RefinedPropNotMatch sp d -> ("RefinedPropNotMatch", sp, d, specPath, dataPath)
         OrMatchNothing sp d -> ("OrMatchNothing", sp, d, specPath, dataPath)
-        OrNotMatchLeft r -> iter r direct ("<left>" ++ specPath) (dataPath)
-        OrNotMatchRight r -> iter r direct ("<right>" ++ specPath) (dataPath)
-        RefNotMatch name r ->  iter r direct ("{" ++ name ++ "}" ++ specPath) (dataPath)
+        OrNotMatchLeft r -> iter r dc (specPath ++ "<left>") (dataPath)
+        OrNotMatchRight r -> iter r dc (specPath ++ "<right>") (dataPath)
+        RefNotMatch name r ->  iter r dc (specPath ++ "{" ++ name ++ "}") (dataPath)
 
 instance MultilingualShow UnMatchedReason where
     showEn r =
         let (direct, sp, d, specPath, dataPath) = explain r
-        in "  Direct Cause: " ++ direct ++
+        in "  Abstract: it" ++ dataPath ++ " should be a " ++ show sp ++ ", but got " ++ show d ++
+            "\n  Direct Cause: " ++ direct ++
             "\n    Spec: " ++ show sp ++
             "\n    Data: " ++ show d ++
-            "\n  Spec Path: spec" ++ specPath ++
-            "\n  Data Path: data" ++ dataPath
+            "\n  Spec Path: " ++ specPath ++
+            "\n  Data Path: " ++ dataPath
     showZh r =
         let (direct, sp, d, specPath, dataPath) = explain r
-        in "  直接原因: " ++ direct ++
+        in "  摘要: it" ++ dataPath ++ " 应该是一个 " ++ show sp ++ ", 但这里是 " ++ show d ++
+            "\n  直接原因: " ++ direct ++
             "\n    规格: " ++ show sp ++
             "\n    数据: " ++ show d ++
-            "\n  规格路径: spec" ++ specPath ++
-            "\n  数据路径: data" ++ dataPath
+            "\n  规格路径: " ++ specPath ++
+            "\n  数据路径: " ++ dataPath
 
 instance MultilingualShow MatchResult where
     showEn Matched = "Matched"
@@ -408,7 +433,7 @@ matchSpec env t d = let rec = matchSpec env in case (t, d) of
         (let l1 = length ts; l2 = length xs in (l1 == l2) `otherwise` (TupleLengthNotMatch t d)) <>
         fold [wrap (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts xs]
     (Array t, (JsonArray xs)) -> fold [wrap (ArrayElementNotMatch i) (rec t x) | (i, x) <- zip [0..] xs]
-    (NamedTuple ps, (JsonObject kvs)) -> let mp = M.fromList kvs in fold [rec t (fromMaybe JsonNull (M.lookup k mp)) | (k, t) <- ps] --NamedTuple is not strict
+    (NamedTuple ps, d@(JsonObject kvs)) -> fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj k d)) | (k, t) <- ps] --NamedTuple is not strict
     (TextMap t, (JsonObject kvs)) -> fold [wrap (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
     (t@(Refined t1 p), d) -> wrap RefinedShapeNotMatch (rec t1 d) <> (testProp p d `otherwise` (RefinedPropNotMatch t d))
     (t@(Alternative t1 t2 makeChoice), d) -> case makeChoice d of
@@ -421,6 +446,16 @@ matchSpec env t d = let rec = matchSpec env in case (t, d) of
 matchSpec' :: Env CheckedSpec -> CheckedSpec -> JsonData -> Bool
 matchSpec' env t d = case (matchSpec env t d) of Matched -> True; _ -> False
 
+tryMatchSpec :: Env Spec -> Spec -> JsonData -> Either CheckFailedReason MatchResult
+tryMatchSpec env sp d = ((,) <$> checkEnv env <*> checkSpec env sp) >>= (\(env', sp') -> pure (matchSpec env' sp' d))
+
+-- everywhereJ
+
+type CheckedJson = (JsonData, CheckedSpec) -- also with a proof about (matchSpec' sp d = True)
+
+everywhereJ :: Monad m => Env CheckedSpec -> CheckedSpec -> Name -> (JsonData -> m JsonData) -> (JsonData -> m JsonData)
+everywhereJ env sp name g d = undefined
+
 -- test
 
 ast = Or case1 case2
@@ -432,6 +467,13 @@ env = M.fromList [("AST", ast)]
 dat1 = JsonArray [JsonText "Lit", JsonNumber 1]
 dat2 = JsonArray [JsonText "Lit", JsonText "1"]
 
+spec1 = NamedTuple [("x", Number), ("y", Number)]
+spec2 = NamedTuple [("z", Number), ("x", Text)]
+spec2' = NamedTuple [("z", Number), ("x", Number)]
+
+spec3 = NamedTuple [("x", Number), ("y", NamedTuple [("z", Number), ("w", Number)])]
+data3 = JsonObject [("x", JsonNumber 1), ("y", JsonObject [("z", JsonNumber 2), ("w", JsonText "3")])]
+
 main :: IO ()
 main = do
     print (checkSpec env (Or Number Text))
@@ -442,14 +484,10 @@ main = do
     print (checkSpec env (Or (Or Number Text) case1'))
     print (checkSpec env (Or (Or Number Text) (Or case1 case1')))
     print (toShape env ast)
-    case checkSpec env ast of
-        Right ast' -> do
-            traceM $ "GOT ast': " ++ show ast'
-            case checkEnv env of
-                Right env' -> do
-                    traceM $ "GOT env': " ++ show env'
-                    printEn (matchSpec env' ast' dat1)
-                    printEn (matchSpec env' ast' dat2)
-                _ -> putStrLn "error"
-        _ -> putStrLn "error"
+    print (checkSpec env (Or spec1 spec2))
+    print (checkSpec env (Or spec1 spec2'))
+    print (checkSpec env (Or spec1 spec2'))
+    printEn (tryMatchSpec env ast dat1)
+    printZh (tryMatchSpec env ast dat2)
+    printZh (tryMatchSpec env spec3 data3)
 
