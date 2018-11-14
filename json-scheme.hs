@@ -454,7 +454,19 @@ tryMatchSpec env sp d = ((,) <$> checkEnv env <*> checkSpec env sp) >>= (\(env',
 type CheckedJson = (JsonData, CheckedSpec) -- also with a proof about (matchSpec' sp d = True)
 
 everywhereJ :: Monad m => Env CheckedSpec -> CheckedSpec -> Name -> (JsonData -> m JsonData) -> (JsonData -> m JsonData)
-everywhereJ env sp name g d = undefined
+everywhereJ env spec name g dat = rec spec dat where
+    rec spec dat = case (spec, dat) of
+        (Tuple ts, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | (t, x) <- zip ts xs]) >>= g
+        (Array t, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | x <- xs]) >> g
+        (NamedTuple ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k, rec t (lookupObj k d)) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
+        (TextMap t, (JsonObject kvs)) -> (JsonObject <$> sequence [(k, rec t v) | (k, v) <- kvs]) >>= g
+        (Refined t _, d) -> rec t d
+        (Alternative t1 t2 makeChoice, d) -> case makeChoice d of
+            MatchLeft -> rec t1 d
+            MatchRight -> rec t2 d
+            MatchNothing -> error "everywhereJ not used correctly (1)"
+        (Ref name', d) -> let t = env M.! name in if name' == name then rec t d >>= g else rec t d
+        (t, d) -> if matchShape t d then pure d else error "everywhereJ not used correctly (2)"
 
 -- test
 
