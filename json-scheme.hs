@@ -46,11 +46,10 @@ compareSortedListWith key xs ys = iter xs ys [] [] [] where
 
 type Spec = TypeRep -- without Alternative
 type Shape = TypeRep -- without Alternative, Ref, Refined
-type SimpleShape = TypeRep -- only simple atomic shapes (8 cases)
 type CheckedSpec = TypeRep -- without Or
 -- subtyping relations:
---   SimpleShape <: Shape <: Spec
---   SimpleShape <: CheckedSpec <: Spec
+--   Shape <: Spec
+--   CheckedSpec <: Spec
 
 data TypeRep =
       Anything
@@ -309,10 +308,10 @@ shapeOverlap tr1 tr2 = case (tr1, tr2) of
         error "error in shapeOverlap: Shape should not contain Ref node !"
     (_, Ref _) ->
         error "error in shapeOverlap: Shape should not contain Ref node !"
-    (t1, t2) -> --NOTE: these trivial cases, depending on matchShape, it's correctness is subtle.
-        if matchShape' t2 (example t1) then Overlapping (example t1)
-        else if matchShape' t1 (example t2) then Overlapping (example t2)
-        else NonOverlapping $ \d -> if (matchShape' t1 d) then MatchLeft else if (matchShape' t2 d) then MatchRight else MatchNothing
+    (t1, t2) -> --NOTE: these trivial cases, depending on matchOutline, it's correctness is subtle.
+        if matchOutline' t2 (example t1) then Overlapping (example t1)
+        else if matchOutline' t1 (example t2) then Overlapping (example t2)
+        else NonOverlapping $ \d -> if (matchOutline' t1 d) then MatchLeft else if (matchOutline' t2 d) then MatchRight else MatchNothing
 
 -- matchSpec
 
@@ -404,8 +403,8 @@ isSimpleShape t = case t of
     ConstBoolean b -> True
     _ -> False
 
-matchShape :: SimpleShape -> JsonData -> MatchResult --NOTE: this is shadow matching, only process trivial cases
-matchShape t d = case (t, d) of
+matchOutline :: TypeRep -> JsonData -> MatchResult --NOTE: this is shadow matching, only process trivial cases
+matchOutline t d = case (t, d) of
     (Anything, _) -> Matched
     (Number, (JsonNumber _)) -> Matched
     (Text, (JsonText _)) -> Matched
@@ -418,14 +417,14 @@ matchShape t d = case (t, d) of
     (Array _, (JsonArray _)) -> Matched
     (NamedTuple _, (JsonObject _)) -> Matched
     (TextMap _, (JsonObject _)) -> Matched
-    (Refined t _, d) -> matchShape t d
-    (Ref _, d) -> error ("matchShape can not process with Ref/Or/Alternative node: " ++ show t)
-    (Or _ _, d) -> error ("matchShape can not process with Ref/Or/Alternative node: " ++ show t)
-    (Alternative _ _ _, d) -> error ("matchShape can not process with Ref/Or/Alternative node: " ++ show t)
+    (Refined t _, d) -> matchOutline t d
+    (Ref _, d) -> error ("matchOutline can not process with Ref/Or/Alternative node: " ++ show t)
+    (Or _ _, d) -> error ("matchOutline can not process with Ref/Or/Alternative node: " ++ show t)
+    (Alternative _ _ _, d) -> error ("matchOutline can not process with Ref/Or/Alternative node: " ++ show t)
     (t, d) -> UnMatched (ShapeNotMatch t d)
 
-matchShape' :: SimpleShape -> JsonData -> Bool
-matchShape' t d = case (matchShape t d) of Matched -> True; _ -> False
+matchOutline' :: TypeRep -> JsonData -> Bool
+matchOutline' t d = case (matchOutline t d) of Matched -> True; _ -> False
 
 matchSpec :: Env CheckedSpec -> CheckedSpec -> JsonData -> MatchResult
 matchSpec env t d = let rec = matchSpec env in case (t, d) of
@@ -441,7 +440,7 @@ matchSpec env t d = let rec = matchSpec env in case (t, d) of
         MatchRight -> wrap OrNotMatchRight (rec t2 d)
         MatchNothing -> UnMatched (OrMatchNothing t d)
     (Ref name, d) -> wrap (RefNotMatch name) (rec (env M.! name) d) -- NOTICE: can fail if name not in env
-    (t, d) -> matchShape t d
+    (t, d) -> matchOutline t d
 
 matchSpec' :: Env CheckedSpec -> CheckedSpec -> JsonData -> Bool
 matchSpec' env t d = case (matchSpec env t d) of Matched -> True; _ -> False
@@ -457,16 +456,16 @@ everywhereJ :: Monad m => Env CheckedSpec -> CheckedSpec -> Name -> (JsonData ->
 everywhereJ env spec name g dat = rec spec dat where
     rec spec dat = case (spec, dat) of
         (Tuple ts, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | (t, x) <- zip ts xs]) >>= g
-        (Array t, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | x <- xs]) >> g
-        (NamedTuple ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k, rec t (lookupObj k d)) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
-        (TextMap t, (JsonObject kvs)) -> (JsonObject <$> sequence [(k, rec t v) | (k, v) <- kvs]) >>= g
+        (Array t, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | x <- xs]) >>= g
+        (NamedTuple ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k,) <$> rec t (lookupObj k d) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
+        (TextMap t, (JsonObject kvs)) -> (JsonObject <$> sequence [(k,) <$> rec t v | (k, v) <- kvs]) >>= g
         (Refined t _, d) -> rec t d
         (Alternative t1 t2 makeChoice, d) -> case makeChoice d of
             MatchLeft -> rec t1 d
             MatchRight -> rec t2 d
             MatchNothing -> error "everywhereJ not used correctly (1)"
         (Ref name', d) -> let t = env M.! name in if name' == name then rec t d >>= g else rec t d
-        (t, d) -> if matchShape t d then pure d else error "everywhereJ not used correctly (2)"
+        (t, d) -> if matchOutline' t d then pure d else error "everywhereJ not used correctly (2)"
 
 -- test
 
