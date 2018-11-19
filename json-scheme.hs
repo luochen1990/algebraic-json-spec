@@ -1,6 +1,6 @@
 -- Copyright 2018 and onwards LuoChen (luochen1990@gmail.com).
 
-{-# language DeriveDataTypeable, TupleSections #-}
+{-# language TupleSections #-}
 import Debug.Trace
 import Prelude hiding (otherwise)
 import qualified Data.Map as M
