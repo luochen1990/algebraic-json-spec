@@ -1,4 +1,4 @@
--- Copyright 2018 and onwards LuoChen (luochen1990@gmail.com).
+-- Copyright 2018 LuoChen (luochen1990@gmail.com). Licensed under the Apache License 2.0.
 
 {-# language TupleSections #-}
 import Debug.Trace

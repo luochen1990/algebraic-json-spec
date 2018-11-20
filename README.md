@@ -1,13 +1,14 @@
-JSON Scheme
-===========
+Algebraic JSON
+==============
 
 A JSON data format specification tool.
 
 Features
 --------
 
-- Disjoint Union without Tags.
-- Doc Generation.
-- Random Sample Generation.
-- Generic Programming Tools.
+- Tagless disjoint union.
+- Doc generation.
+- Runtime data format checking.
+- Random sample generation.
+- Generic programming tools.
 
