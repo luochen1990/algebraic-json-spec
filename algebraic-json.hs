@@ -1,6 +1,8 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Licensed under the Apache License 2.0.
 
 {-# language TupleSections #-}
+{-# language RankNTypes #-}
+
 import Debug.Trace
 import Prelude hiding (otherwise)
 import qualified Data.Map as M
@@ -18,19 +20,20 @@ import GHC.Exts (sortWith)
 
 -- generic tools
 
-class Show a => MultilingualShow a where
-    showZh :: a -> String
-    showZh = showEn
-    showEn :: a -> String
-    showEn = show
-    printZh :: a -> IO ()
-    printZh = putStrLn . showZh
-    printEn :: a -> IO ()
+class MultilingualShow a where
+    showEnWith, showZhWith :: (forall a'. MultilingualShow a' => a' -> String) -> (a -> String)
+    showZhWith showPart = showEnWith showPart
+
+    showEn, showZh :: a -> String
+    showEn = showEnWith showEn
+    showZh = showZhWith showZh
+
+    printEn, printZh :: a -> IO ()
     printEn = putStrLn . showEn
+    printZh = putStrLn . showZh
 
 instance (MultilingualShow a, MultilingualShow b) => MultilingualShow (Either a b) where
-    showEn e = case e of Left x -> "Left " ++ showEn x; Right y -> "Right " ++ showEn y
-    showZh e = case e of Left x -> "Left " ++ showZh x; Right y -> "Right " ++ showZh y
+    showEnWith f e = case e of Left x -> "Left " ++ f x; Right y -> "Right " ++ f y
 
 compareSortedListWith :: Ord b => (a -> b) -> [a] -> [a] -> ([(a, a)], [a], [a])
 compareSortedListWith key xs ys = iter xs ys [] [] [] where
@@ -186,8 +189,7 @@ data CheckFailedReason =
     deriving (Show)
 
 instance MultilingualShow CheckFailedReason where
-    showZh = show
-    showEn = show
+    showEnWith _ = show
 
 wrapL :: (a -> a) -> Either a b -> Either a b
 wrapL f e = case e of Left x -> Left (f x); Right y -> Right y
@@ -337,7 +339,7 @@ data UnMatchedReason =
     deriving (Show)
 
 isIdentifier :: String -> Bool
-isIdentifier _ = True
+isIdentifier _ = True --TODO:
 
 explain :: UnMatchedReason -> (String, CheckedSpec, JsonData, String, String)
 explain reason = iter reason "" "" "" where
@@ -358,7 +360,7 @@ explain reason = iter reason "" "" "" where
         RefNotMatch name r ->  iter r dc (specPath ++ "{" ++ name ++ "}") (dataPath)
 
 instance MultilingualShow UnMatchedReason where
-    showEn r =
+    showEnWith _ r =
         let (direct, sp, d, specPath, dataPath) = explain r
         in "  Abstract: it" ++ dataPath ++ " should be a " ++ show sp ++ ", but got " ++ show d ++
             "\n  Direct Cause: " ++ direct ++
@@ -366,7 +368,7 @@ instance MultilingualShow UnMatchedReason where
             "\n    Data: " ++ show d ++
             "\n  Spec Path: " ++ specPath ++
             "\n  Data Path: " ++ dataPath
-    showZh r =
+    showZhWith _ r =
         let (direct, sp, d, specPath, dataPath) = explain r
         in "  摘要: it" ++ dataPath ++ " 应该是一个 " ++ show sp ++ ", 但这里是 " ++ show d ++
             "\n  直接原因: " ++ direct ++
@@ -376,10 +378,7 @@ instance MultilingualShow UnMatchedReason where
             "\n  数据路径: " ++ dataPath
 
 instance MultilingualShow MatchResult where
-    showEn Matched = "Matched"
-    showEn (UnMatched r) = "UnMatched !\n" ++ showEn r
-    showZh Matched = "匹配"
-    showZh (UnMatched r) = "不匹配 !\n" ++ showZh r
+    showEnWith f mr = case mr of Matched -> "Matched"; (UnMatched r) -> "UnMatched !\n" ++ f r
 
 otherwise :: Bool -> UnMatchedReason -> MatchResult
 b `otherwise` reason = if b then Matched else UnMatched reason
