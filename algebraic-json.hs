@@ -321,49 +321,59 @@ shapeOverlap tr1 tr2 = case (tr1, tr2) of
 -- matchSpec
 
 data MatchResult = Matched | UnMatched UnMatchedReason deriving (Show)
-data UnMatchedReason =
-      ShapeNotMatch CheckedSpec JsonData
-    | ConstValueNotEqual CheckedSpec JsonData
-    | TupleLengthNotMatch CheckedSpec JsonData
-    | TupleFieldNotMatch Int UnMatchedReason
-    | ArrayElementNotMatch Int UnMatchedReason
-    | NamedTupleKeySetNotMatch CheckedSpec JsonData
-    | NamedTupleFieldNotMatch String UnMatchedReason
-    | TextMapElementNotMatch String UnMatchedReason
-    | RefinedShapeNotMatch UnMatchedReason
-    | RefinedPropNotMatch CheckedSpec JsonData --TODO: add prop description sentence
-    | OrMatchNothing CheckedSpec JsonData
-    | OrNotMatchLeft UnMatchedReason
-    | OrNotMatchRight UnMatchedReason
-    | RefNotMatch Name UnMatchedReason
+data UnMatchedReason = DirectCause DirectUMR CheckedSpec JsonData | StepCause StepUMR UnMatchedReason deriving (Show)
+
+data DirectUMR =
+      ShapeNotMatch
+    | ConstValueNotEqual
+    | TupleLengthNotMatch
+    | NamedTupleKeySetNotMatch
+    | RefinedPropNotMatch --TODO: add prop description sentence
+    | OrMatchNothing
+    deriving (Show)
+
+data StepUMR =
+      TupleFieldNotMatch Int
+    | ArrayElementNotMatch Int
+    | NamedTupleFieldNotMatch String
+    | TextMapElementNotMatch String
+    | RefinedShapeNotMatch
+    | OrNotMatchLeft
+    | OrNotMatchRight
+    | RefNotMatch Name
     deriving (Show)
 
 isIdentifier :: String -> Bool
 isIdentifier _ = True --TODO:
 
-explain :: UnMatchedReason -> (String, CheckedSpec, JsonData, String, String)
-explain reason = iter reason "" "" "" where
-    iter reason dc specPath dataPath = case reason of
-        ShapeNotMatch sp d -> ("ShapeNotMatch", sp, d, specPath, dataPath)
-        ConstValueNotEqual sp d -> ("ConstValueNotEqual", sp, d, specPath, dataPath)
-        TupleLengthNotMatch sp d -> ("TupleLengthNotMatch", sp, d, specPath, dataPath)
-        TupleFieldNotMatch i r -> iter r dc (specPath ++ "(" ++ show i ++ ")") (dataPath ++ "[" ++ show i ++ "]")
-        ArrayElementNotMatch i r -> iter r dc (specPath ++ "[" ++ show i ++ "]") (dataPath ++ "[" ++ show i ++ "]")
-        NamedTupleKeySetNotMatch sp d -> ("NamedTupleKeySetNotMatch", sp, d, specPath, dataPath)
-        NamedTupleFieldNotMatch k r -> iter r dc (specPath ++ "(" ++ show k ++ ")") (dataPath ++ (if isIdentifier k then "." ++ k else "[" ++ show k ++ "]"))
-        TextMapElementNotMatch k r -> iter r dc (specPath ++ "[" ++ show k ++ "]") (dataPath ++ "[" ++ show k ++ "]")
-        RefinedShapeNotMatch r -> iter r dc (specPath ++ "<refined>") dataPath
-        RefinedPropNotMatch sp d -> ("RefinedPropNotMatch", sp, d, specPath, dataPath)
-        OrMatchNothing sp d -> ("OrMatchNothing", sp, d, specPath, dataPath)
-        OrNotMatchLeft r -> iter r dc (specPath ++ "<left>") (dataPath)
-        OrNotMatchRight r -> iter r dc (specPath ++ "<right>") (dataPath)
-        RefNotMatch name r ->  iter r dc (specPath ++ "{" ++ name ++ "}") (dataPath)
+explain :: UnMatchedReason -> (DirectUMR, CheckedSpec, JsonData, String, String)
+explain reason = iter reason undefined [] where
+    iter reason dc path = case reason of
+        DirectCause dr sp d -> (dr, sp, d, concatMap specAccessor path, concatMap dataAccessor path)
+        StepCause sr r -> iter r dc (path ++ [sr])
+
+    specAccessor r = case r of
+        TupleFieldNotMatch i -> "(" ++ show i ++ ")"
+        ArrayElementNotMatch i -> "[" ++ show i ++ "]"
+        NamedTupleFieldNotMatch k -> "(" ++ show k ++ ")"
+        TextMapElementNotMatch k -> "[" ++ show k ++ "]"
+        RefinedShapeNotMatch -> "<refined>"
+        OrNotMatchLeft -> "<left>"
+        OrNotMatchRight -> "<right>"
+        RefNotMatch name -> "{" ++ name ++ "}"
+
+    dataAccessor r = case r of
+        TupleFieldNotMatch i -> "[" ++ show i ++ "]"
+        ArrayElementNotMatch i -> "[" ++ show i ++ "]"
+        NamedTupleFieldNotMatch k -> (if isIdentifier k then "." ++ k else "[" ++ show k ++ "]")
+        TextMapElementNotMatch k -> "[" ++ show k ++ "]"
+        _ -> ""
 
 instance MultilingualShow UnMatchedReason where
     showEnWith _ r =
         let (direct, sp, d, specPath, dataPath) = explain r
         in "  Abstract: it" ++ dataPath ++ " should be a " ++ show sp ++ ", but got " ++ show d ++
-            "\n  Direct Cause: " ++ direct ++
+            "\n  Direct Cause: " ++ show direct ++
             "\n    Spec: " ++ show sp ++
             "\n    Data: " ++ show d ++
             "\n  Spec Path: " ++ specPath ++
@@ -371,7 +381,7 @@ instance MultilingualShow UnMatchedReason where
     showZhWith _ r =
         let (direct, sp, d, specPath, dataPath) = explain r
         in "  摘要: it" ++ dataPath ++ " 应该是一个 " ++ show sp ++ ", 但这里是 " ++ show d ++
-            "\n  直接原因: " ++ direct ++
+            "\n  直接原因: " ++ show direct ++
             "\n    规格: " ++ show sp ++
             "\n    数据: " ++ show d ++
             "\n  规格路径: " ++ specPath ++
@@ -383,8 +393,8 @@ instance MultilingualShow MatchResult where
 otherwise :: Bool -> UnMatchedReason -> MatchResult
 b `otherwise` reason = if b then Matched else UnMatched reason
 
-wrap :: (UnMatchedReason -> UnMatchedReason) -> MatchResult -> MatchResult
-wrap step rst = case rst of Matched -> Matched; UnMatched reason -> UnMatched (step reason)
+wrap :: StepUMR -> MatchResult -> MatchResult
+wrap step rst = case rst of Matched -> Matched; UnMatched reason -> UnMatched (StepCause step reason)
 
 instance Semigroup MatchResult where
     (<>) Matched Matched = Matched
@@ -414,9 +424,9 @@ matchOutline t d = case (t, d) of
     (Text, (JsonText _)) -> Matched
     (Boolean, (JsonBoolean _)) -> Matched
     (Null, JsonNull) -> Matched
-    (ConstNumber n, d@(JsonNumber n')) -> (n == n') `otherwise` (ConstValueNotEqual (ConstNumber n) d)
-    (ConstText s, d@(JsonText s')) -> (s == s') `otherwise` (ConstValueNotEqual (ConstText s) d)
-    (ConstBoolean b, d@(JsonBoolean b')) -> (b == b') `otherwise` (ConstValueNotEqual (ConstBoolean b) d)
+    (ConstNumber n, d@(JsonNumber n')) -> (n == n') `otherwise` (DirectCause ConstValueNotEqual (ConstNumber n) d)
+    (ConstText s, d@(JsonText s')) -> (s == s') `otherwise` (DirectCause ConstValueNotEqual (ConstText s) d)
+    (ConstBoolean b, d@(JsonBoolean b')) -> (b == b') `otherwise` (DirectCause ConstValueNotEqual (ConstBoolean b) d)
     (Tuple _ _, (JsonArray _)) -> Matched
     (Array _, (JsonArray _)) -> Matched
     (NamedTuple _ _, (JsonObject _)) -> Matched
@@ -425,7 +435,7 @@ matchOutline t d = case (t, d) of
     (Ref _, d) -> error ("matchOutline can not process with Ref/Or/Alternative node: " ++ show t)
     (Or _ _, d) -> error ("matchOutline can not process with Ref/Or/Alternative node: " ++ show t)
     (Alternative _ _ _, d) -> error ("matchOutline can not process with Ref/Or/Alternative node: " ++ show t)
-    (t, d) -> UnMatched (ShapeNotMatch t d)
+    (t, d) -> UnMatched (DirectCause ShapeNotMatch t d)
 
 matchOutline' :: TypeRep -> JsonData -> Bool
 matchOutline' t d = case (matchOutline t d) of Matched -> True; _ -> False
@@ -433,22 +443,22 @@ matchOutline' t d = case (matchOutline t d) of Matched -> True; _ -> False
 matchSpec :: Env CheckedSpec -> CheckedSpec -> JsonData -> MatchResult
 matchSpec env t d = let rec = matchSpec env in case (t, d) of
     (Tuple Strict ts, d@(JsonArray xs)) ->
-        (let l1 = length ts; l2 = length xs in (l1 == l2) `otherwise` (TupleLengthNotMatch t d)) <>
+        (let l1 = length ts; l2 = length xs in (l1 == l2) `otherwise` (DirectCause TupleLengthNotMatch t d)) <>
         fold [wrap (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts xs]
     (Tuple Tolerant ts, d@(JsonArray xs)) ->
         fold [wrap (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts (take (length ts) xs)]
     (Array t, (JsonArray xs)) -> fold [wrap (ArrayElementNotMatch i) (rec t x) | (i, x) <- zip [0..] xs]
     (NamedTuple Strict ps, d@(JsonObject kvs)) ->
-        ((S.fromList (map fst ps) == S.fromList (map fst kvs)) `otherwise` (NamedTupleKeySetNotMatch t d)) <>
+        ((S.fromList (map fst ps) == S.fromList (map fst kvs)) `otherwise` (DirectCause NamedTupleKeySetNotMatch t d)) <>
         fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj k d)) | (k, t) <- ps]
     (NamedTuple Tolerant ps, d@(JsonObject kvs)) ->
         fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj k d)) | (k, t) <- ps]
     (TextMap t, (JsonObject kvs)) -> fold [wrap (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
-    (t@(Refined t1 p), d) -> wrap RefinedShapeNotMatch (rec t1 d) <> (testProp p d `otherwise` (RefinedPropNotMatch t d))
+    (t@(Refined t1 p), d) -> wrap RefinedShapeNotMatch (rec t1 d) <> (testProp p d `otherwise` (DirectCause RefinedPropNotMatch t d))
     (t@(Alternative t1 t2 makeChoice), d) -> case makeChoice d of
         MatchLeft -> wrap OrNotMatchLeft (rec t1 d)
         MatchRight -> wrap OrNotMatchRight (rec t2 d)
-        MatchNothing -> UnMatched (OrMatchNothing t d)
+        MatchNothing -> UnMatched (DirectCause OrMatchNothing t d)
     (Ref name, d) -> wrap (RefNotMatch name) (rec (env M.! name) d) -- NOTICE: can fail if name not in env
     (t, d) -> matchOutline t d
 
