@@ -3,6 +3,8 @@
 {-# language TupleSections #-}
 {-# language RankNTypes #-}
 
+module AlgebraicJSON where
+
 import Debug.Trace
 import Prelude hiding (otherwise)
 import qualified Data.Map as M
@@ -508,8 +510,8 @@ data3 = JsonObject [("x", JsonNumber 1), ("y", JsonObject [("z", JsonNumber 2), 
 spec4 = Or spec3 (NamedTuple Tolerant [("x", Text), ("y", Number)])
 data4 = JsonObject [("x", JsonNumber 1), ("y", JsonObject [("z", JsonNumber 2), ("w", JsonText "3")])]
 
-main :: IO ()
-main = do
+testAJ :: IO ()
+testAJ = do
     print (checkSpec env (Or Number Text))
     print (checkSpec env (Or (Or Number Text) (ConstText "abc")))
     print (checkSpec env (Or (Or Number Text) case1))

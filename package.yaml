@@ -1,14 +1,13 @@
 name:                algebraic-json
 version:             0.1.0.0
 github:              "luochen1990/algebraic-json"
-license:             Apache2
+license:             Apache-2.0
 author:              "LuoChen"
 maintainer:          "luochen1990@gmail.com"
 copyright:           "2018 LuoChen"
 
 extra-source-files:
 - README.md
-- ChangeLog.md
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -17,10 +16,13 @@ extra-source-files:
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
 # common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/luochen1990/algebraic-json#readme>
+description:         Please see the README on GitHub at <https://github.com/luochen1990/algebraic-json#README.md>
 
 dependencies:
 - base >= 4.7 && < 5
+- containers
+- mtl
+- hspec
 
 library:
   source-dirs: src

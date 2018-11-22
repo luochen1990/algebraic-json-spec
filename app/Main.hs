@@ -1,6 +1,6 @@
 module Main where
 
-import Lib
+import AlgebraicJSON
 
 main :: IO ()
-main = someFunc
+main = testAJ
