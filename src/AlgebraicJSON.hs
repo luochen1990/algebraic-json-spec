@@ -3,7 +3,12 @@
 {-# language TupleSections #-}
 {-# language RankNTypes #-}
 
-module AlgebraicJSON where
+module AlgebraicJSON (
+    Spec, TypeRep(..), Strictness(..),
+    JsonData(..),
+    checkSpec, matchSpec, tryMatchSpec, everywhereJ, example,
+    MultilingualShow(..), toShape, compareSortedListWith, testAJ
+) where
 
 import Debug.Trace
 import Prelude hiding (otherwise)
@@ -41,9 +46,9 @@ compareSortedListWith :: Ord b => (a -> b) -> [a] -> [a] -> ([(a, a)], [a], [a])
 compareSortedListWith key xs ys = iter xs ys [] [] [] where
     iter xs ys both onlyXs onlyYs = case (xs, ys) of
         ((x:xs'), (y:ys')) ->
-            if key x == key y then iter xs' ys' ((x, y):both) onlyXs onlyYs
-            else if key x < key y then iter xs' (y:ys') both (x:onlyXs) onlyYs
-            else {- key x > key y -} iter (x:xs') ys' both onlyXs (y:onlyYs)
+            if key x == key y then iter xs' ys' (both++[(x, y)]) onlyXs onlyYs
+            else if key x < key y then iter xs' (y:ys') both (onlyXs++[x]) onlyYs
+            else {- key x > key y -} iter (x:xs') ys' both onlyXs (onlyYs++[y])
         ([], ys) -> (both, onlyXs, onlyYs ++ ys)
         (xs, []) -> (both, onlyXs ++ xs, onlyYs)
 
