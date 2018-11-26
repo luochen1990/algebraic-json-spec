@@ -6,10 +6,55 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.List
 import Control.Exception
-import Test.Hspec
+import Test.Hspec hiding (Spec)
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
 import AlgebraicJSON
+
+isRight :: Either a b -> Bool
+isRight e = either (const False) (const True) e
+
+matchSpec'' = matchSpec' M.empty
+
+arbId = elements ["a", "b", "c", "d", "e"]
+arbNat = elements [0, 1, 2]
+
+instance Arbitrary Strictness where
+  arbitrary = elements [Strict, Tolerant]
+
+instance Arbitrary TypeRep where
+  arbitrary = sized tree' where
+    tree' 0 = oneof [pure Anything, pure Number, pure Text, pure Boolean, pure Null, ConstNumber <$> arbitrary, ConstText <$> arbId, ConstBoolean <$> arbitrary]
+    tree' n | n > 0 = oneof [
+      Tuple <$> arbitrary <*> (arbNat >>= \m -> vectorOf m (tree' ((n-1) `div` m))),
+      Array <$> (tree' (n-1)),
+      NamedTuple <$> arbitrary <*> (arbNat >>= \m -> vectorOf m ((,) <$> arbId <*> (tree' ((n-1) `div` m)))),
+      TextMap <$> (tree' (n-1)),
+      Or <$> tree' ((n-1) `div` 2) <*> tree' ((n-1) `div` 2)]
+  shrink tr = case tr of
+    Tuple s ts -> ts ++ [Tuple s ts' | ts' <- shrink ts]
+    Array t -> t : [Array t' | t' <- shrink t]
+    NamedTuple s ps -> map snd ps ++ [NamedTuple s ps' | ps' <- shrink ps]
+    TextMap t -> t : [TextMap t' | t' <- shrink t]
+    Refined t p -> t : [Refined t' p | t' <- shrink t]
+    Or t1 t2 -> [t1, t2] ++ [Or t1' t2' | t1' <- shrink t1, t2' <- shrink t2]
+    Alternative t1 t2 _ -> [t1, t2]
+    _ -> []
+
+instance Arbitrary JsonData where
+  arbitrary = sized tree' where
+    tree' 0 = oneof [
+      JsonNumber <$> arbitrary,
+      JsonText <$> arbId,
+      JsonBoolean <$> arbitrary,
+      pure JsonNull]
+    tree' n | n > 0 = oneof [
+      JsonArray <$> (arbNat >>= \m -> vectorOf m (tree' ((n-1) `div` m))),
+      JsonObject <$> (arbNat >>= \m -> vectorOf m ((,) <$> arbId <*> (tree' ((n-1) `div` m))))]
+  shrink d = case d of
+    JsonArray xs -> xs ++ [JsonArray xs' | xs' <- shrink xs]
+    JsonObject ps -> map snd ps ++ [JsonObject ps' | ps' <- shrink ps]
+    _ -> []
 
 mergeSorted :: Ord a => [a] -> [a] -> [a]
 mergeSorted [] ys = ys
@@ -28,6 +73,11 @@ main = hspec $ do
           mergeSorted bothL onlyL === xs .&&. mergeSorted bothR onlyR === ys .&&.
           (case (compareSortedListWith id onlyL onlyR) of (both', _, _) -> both' === []) .&&.
           (case (compareSortedListWith id bothL bothR) of (both', _, _) -> both' === both)
+
+    prop "matchSpec-Or-commutative" $
+      \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
+        let rst = (,) <$> checkSpec M.empty (Or sp1 sp2) <*> checkSpec M.empty (Or sp2 sp1)
+        in isRight rst ==> case rst of Right (or1, or2) -> (let r1 = matchSpec'' or1 d; r2 = matchSpec'' or2 d in collect (r1, r2) $ r1 === r2)
 
     it "works with some simple cases" $ do
       show (checkSpec env (Or Number Text)) `shouldBe` "Right (Number | Text)"

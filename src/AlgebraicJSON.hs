@@ -6,7 +6,7 @@
 module AlgebraicJSON (
     Spec, TypeRep(..), Strictness(..),
     JsonData(..),
-    checkSpec, matchSpec, tryMatchSpec, everywhereJ, example,
+    checkSpec, matchSpec, matchSpec', tryMatchSpec, everywhereJ, example,
     MultilingualShow(..), toShape, compareSortedListWith, testAJ
 ) where
 
@@ -305,7 +305,7 @@ shapeOverlap tr1 tr2 = case (tr1, tr2) of
     (Or t1 t2, t3) ->
         joinLeftOrPath (shapeOverlap t1 t3) (shapeOverlap t2 t3)
     (t1, Or t2 t3) ->
-        joinLeftOrPath (shapeOverlap t1 t2) (shapeOverlap t1 t3)
+        joinRightOrPath (shapeOverlap t1 t2) (shapeOverlap t1 t3)
     (Anything, t) -> Overlapping (example t) -- trivial case
     (t, Anything) -> Overlapping (example t) -- trivial case
     (Alternative _ _ _, _) ->
@@ -515,6 +515,10 @@ data3 = JsonObject [("x", JsonNumber 1), ("y", JsonObject [("z", JsonNumber 2), 
 spec4 = Or spec3 (NamedTuple Tolerant [("x", Text), ("y", Number)])
 data4 = JsonObject [("x", JsonNumber 1), ("y", JsonObject [("z", JsonNumber 2), ("w", JsonText "3")])]
 
+t1 = Or (NamedTuple Strict []) (Array Null)
+t2 = Number
+d = JsonArray []
+
 testAJ :: IO ()
 testAJ = do
     print (checkSpec env (Or Number Text))
@@ -532,4 +536,7 @@ testAJ = do
     printZh (tryMatchSpec env ast dat2)
     printZh (tryMatchSpec env spec3 data3)
     printZh (tryMatchSpec env spec4 data4)
+
+    printZh (tryMatchSpec M.empty (Or t1 t2) d)
+    printZh (tryMatchSpec M.empty (Or t2 t1) d)
 
