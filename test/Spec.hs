@@ -1,12 +1,13 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Licensed under the Apache License 2.0.
 
 {-# language ScopedTypeVariables #-}
+{-# language MonadComprehensions #-}
 
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.List
 import Control.Exception
-import Test.Hspec hiding (Spec)
+import Test.Hspec hiding (Spec, example)
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
 import AlgebraicJSON
@@ -14,10 +15,22 @@ import AlgebraicJSON
 isRight :: Either a b -> Bool
 isRight e = either (const False) (const True) e
 
+isMatched :: MatchResult -> Bool
+isMatched r = case r of Matched -> True; _ -> False
+
 matchSpec'' = matchSpec' M.empty
 
+arbId :: Gen String
 arbId = elements ["a", "b", "c", "d", "e"]
+
+arbNat :: Gen Int
 arbNat = elements [0, 1, 2]
+
+arbSet :: Eq a => Int -> Gen a -> Gen [a]
+arbSet n k = vectorOf n k >>= pure . nub
+
+arbMap :: Eq a => Int -> Gen a -> Gen b -> Gen [(a, b)]
+arbMap n k v = [zip ks vs | ks <- arbSet n k, vs <- vectorOf (length ks) v]
 
 instance Arbitrary Strictness where
   arbitrary = elements [Strict, Tolerant]
@@ -28,18 +41,21 @@ instance Arbitrary TypeRep where
     tree' n | n > 0 = oneof [
       Tuple <$> arbitrary <*> (arbNat >>= \m -> vectorOf m (tree' ((n-1) `div` m))),
       Array <$> (tree' (n-1)),
-      NamedTuple <$> arbitrary <*> (arbNat >>= \m -> vectorOf m ((,) <$> arbId <*> (tree' ((n-1) `div` m)))),
+      NamedTuple <$> arbitrary <*> (arbNat >>= \m -> arbMap m arbId (tree' ((n-1) `div` m))),
       TextMap <$> (tree' (n-1)),
       Or <$> tree' ((n-1) `div` 2) <*> tree' ((n-1) `div` 2)]
   shrink tr = case tr of
-    Tuple s ts -> ts ++ [Tuple s ts' | ts' <- shrink ts]
-    Array t -> t : [Array t' | t' <- shrink t]
-    NamedTuple s ps -> map snd ps ++ [NamedTuple s ps' | ps' <- shrink ps]
-    TextMap t -> t : [TextMap t' | t' <- shrink t]
-    Refined t p -> t : [Refined t' p | t' <- shrink t]
-    Or t1 t2 -> [t1, t2] ++ [Or t1' t2' | t1' <- shrink t1, t2' <- shrink t2]
-    Alternative t1 t2 _ -> [t1, t2]
-    _ -> []
+    Tuple s ts -> Null : ts ++ [Tuple s ts' | ts' <- shrinkList shrink ts] ++ [Tuple Strict ts | s == Tolerant]
+    Array t -> Null : t : [Array t' | t' <- shrink t]
+    NamedTuple s ps -> Null : map snd ps ++ [NamedTuple s ps' | ps' <- shrinkList shrink ps] ++ [NamedTuple Strict ps | s == Tolerant]
+    TextMap t -> Null : t : [TextMap t' | t' <- shrink t]
+    Refined t p -> Null : t : [Refined t' p | t' <- shrink t]
+    Or t1 t2 -> Null : [t1, t2] ++ [Or t1' t2' | (t1', t2') <- shrink (t1, t2)]
+    Alternative t1 t2 _ -> Null : [t1, t2]
+    ConstNumber x -> Null : [ConstNumber 1 | x /= 1]
+    ConstText s -> Null : [ConstText "a" | s /= "a"]
+    Null -> []
+    _ -> [Null]
 
 instance Arbitrary JsonData where
   arbitrary = sized tree' where
@@ -50,11 +66,14 @@ instance Arbitrary JsonData where
       pure JsonNull]
     tree' n | n > 0 = oneof [
       JsonArray <$> (arbNat >>= \m -> vectorOf m (tree' ((n-1) `div` m))),
-      JsonObject <$> (arbNat >>= \m -> vectorOf m ((,) <$> arbId <*> (tree' ((n-1) `div` m))))]
+      JsonObject <$> (arbNat >>= \m -> arbMap m arbId (tree' ((n-1) `div` m)))]
   shrink d = case d of
     JsonArray xs -> xs ++ [JsonArray xs' | xs' <- shrink xs]
     JsonObject ps -> map snd ps ++ [JsonObject ps' | ps' <- shrink ps]
-    _ -> []
+    JsonNumber x -> JsonNull : [JsonNumber 1 | x /= 1]
+    JsonText s -> JsonNull : [JsonText "a" | s /= "a"]
+    JsonNull -> []
+    _ -> [JsonNull]
 
 mergeSorted :: Ord a => [a] -> [a] -> [a]
 mergeSorted [] ys = ys
@@ -73,6 +92,11 @@ main = hspec $ do
           mergeSorted bothL onlyL === xs .&&. mergeSorted bothR onlyR === ys .&&.
           (case (compareSortedListWith id onlyL onlyR) of (both', _, _) -> both' === []) .&&.
           (case (compareSortedListWith id bothL bothR) of (both', _, _) -> both' === both)
+
+    prop "example-matchSpec" $
+      \(sp :: Spec) ->
+        let rst = tryMatchSpec M.empty sp (example sp)
+        in isRight rst ==> case rst of Right r -> r === Matched
 
     prop "matchSpec-Or-commutative" $
       \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->

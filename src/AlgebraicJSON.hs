@@ -6,7 +6,7 @@
 module AlgebraicJSON (
     Spec, TypeRep(..), Strictness(..),
     JsonData(..),
-    checkSpec, matchSpec, matchSpec', tryMatchSpec, everywhereJ, example,
+    checkSpec, matchSpec, matchSpec', tryMatchSpec, everywhereJ, example, MatchResult(..),
     MultilingualShow(..), toShape, compareSortedListWith, testAJ
 ) where
 
@@ -18,6 +18,7 @@ import Data.Semigroup
 import Data.Foldable (fold, foldMap)
 import Data.List (intercalate)
 import Data.Maybe
+import Data.Char (isAlphaNum)
 import Control.Monad.State
 import GHC.Exts (sortWith)
 --import Data.Generics.Schemes (everywhereM)
@@ -82,7 +83,7 @@ data TypeRep =
 type Name = String
 data DecProp = DecProp {testProp :: JsonData -> Bool}
 data MatchChoice = MatchLeft | MatchRight | MatchNothing deriving (Show, Eq, Ord)
-data Strictness = Strict | Tolerant
+data Strictness = Strict | Tolerant deriving (Show, Eq, Ord)
 
 data JsonData =
       JsonNumber Double
@@ -113,16 +114,23 @@ example tr = case tr of
     TextMap t -> JsonObject [("k", example t)]
     Refined t _ -> error "Shape should not contain Refined"
     Ref name -> error "Shape should not contain Ref"
-    Or a b -> error "Shape should not contain Or"
+    Or a b -> example a
     Alternative a b _ -> example a
 
 extendObj :: JsonData -> JsonData -> JsonData
 extendObj (JsonObject ps1) (JsonObject ps2) = JsonObject (ps1 ++ ps2)
 extendObj _ _ = error "extendObj must be used on two JsonObject"
 
-lookupObj :: String -> JsonData -> JsonData
-lookupObj k (JsonObject kvs) = (fromMaybe JsonNull (M.lookup k (M.fromList kvs)))
+lookupObj :: String -> JsonData -> Maybe JsonData
+lookupObj k (JsonObject kvs) = (M.lookup k (M.fromList kvs))
 lookupObj _ _ = error "lookupObj must be used on JsonObject"
+
+lookupObj' :: String -> JsonData -> JsonData
+lookupObj' k (JsonObject kvs) = (fromMaybe JsonNull (M.lookup k (M.fromList kvs)))
+lookupObj' _ _ = error "lookupObj' must be used on JsonObject"
+
+setEq :: Ord a => [a] -> [a] -> Bool
+setEq xs ys = S.fromList xs == S.fromList ys
 
 instance Show TypeRep where
     show tr = case tr of
@@ -135,10 +143,10 @@ instance Show TypeRep where
         ConstText s -> show s
         ConstBoolean b -> show b
         Tuple Strict ts -> "(" ++ intercalate ", " (map show ts) ++ ")"
-        Tuple Tolerant ts -> "(" ++ intercalate ", " (map show ts) ++ ", *)"
+        Tuple Tolerant ts -> "(" ++ intercalate ", " (map show ts ++ ["*"]) ++ ")"
         Array t -> "Array<" ++ show t ++ ">"
-        NamedTuple Strict ps -> "{" ++ intercalate ", " [k ++ ": " ++ show t | (k, t) <- ps] ++ "}"
-        NamedTuple Tolerant ps -> "{" ++ intercalate ", " [k ++ ": " ++ show t | (k, t) <- ps] ++ ", *}"
+        NamedTuple Strict ps -> "{" ++ intercalate ", " [showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ "}"
+        NamedTuple Tolerant ps -> "{" ++ intercalate ", " ([showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ ["*"]) ++ "}"
         TextMap t -> "Map<" ++ show t ++ ">"
         Refined t _ -> "Refined<" ++ show t ++ ">"
         Ref name -> name
@@ -152,7 +160,7 @@ instance Show JsonData where
         JsonBoolean b -> show b
         JsonNull -> "null"
         JsonArray xs -> "[" ++ intercalate ", " (map show xs) ++ "]"
-        JsonObject ps -> "{" ++ intercalate ", " [k ++ ": " ++ show v | (k, v) <- ps] ++ "}"
+        JsonObject ps -> "{" ++ intercalate ", " [showIdentifier k ++ ": " ++ show v | (k, v) <- ps] ++ "}"
 
 -- specialized version of everywhereM for TypeRep
 everywhereMTR :: Monad m => (TypeRep -> m TypeRep) -> (TypeRep -> m TypeRep)
@@ -214,20 +222,32 @@ checkSpec env = everywhereMTR f where
 checkEnv :: Env Spec -> Either CheckFailedReason (Env CheckedSpec)
 checkEnv env = M.fromList <$> sequence [(k,) <$> wrapL (InvalidItemInEnv k) (checkSpec env sp) | (k, sp) <- M.toList env]
 
+matchNull :: TypeRep -> Bool
+matchNull tr = execState (everywhereMTR g tr) False where
+    g :: TypeRep -> State Bool TypeRep
+    g Null = put True >> pure Null
+    g t = pure t
+
 data ShapeRelation =
       Overlapping JsonData
     | MayOverlapping JsonData
     | NonOverlapping (JsonData -> MatchChoice)
 
-joinTupleComponents :: [ShapeRelation] -> ShapeRelation
-joinTupleComponents [] = Overlapping (JsonArray [])
-joinTupleComponents (r:rs) = case (r, joinTupleComponents rs) of
+joinTupleComponents :: Int -> Int -> [ShapeRelation] -> ShapeRelation
+joinTupleComponents _ _ [] = Overlapping (JsonArray [])
+joinTupleComponents l1 l2 (r:rs) = case (r, joinTupleComponents (l1-1) (l2-1) rs) of
     (Overlapping d1, Overlapping (JsonArray ds)) -> Overlapping (JsonArray (d1:ds))
     (Overlapping d1, MayOverlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
     (MayOverlapping d1, Overlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
     (MayOverlapping d1, MayOverlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
-    (_, NonOverlapping c2) -> NonOverlapping (\d -> case d of (JsonArray (x:xs)) -> c2 (JsonArray xs); _ -> MatchNothing)
-    (NonOverlapping c1, _) -> NonOverlapping (\d -> case d of (JsonArray (x:xs)) -> c1 x; _ -> MatchNothing)
+    (_, NonOverlapping c2) -> NonOverlapping (\d -> case d of
+        (JsonArray (x:xs)) -> c2 (JsonArray xs)
+        (JsonArray []) -> if l1 <= 0 then MatchLeft else if l2 <= 0 then MatchRight else MatchNothing
+        _ -> MatchNothing)
+    (NonOverlapping c1, _) -> NonOverlapping (\d -> case d of
+        (JsonArray (x:xs)) -> c1 x
+        (JsonArray []) -> if l1 <= 0 then MatchLeft else if l2 <= 0 then MatchRight else MatchNothing
+        _ -> MatchNothing)
 
 joinObjectComponents :: [(String, ShapeRelation)] -> ShapeRelation
 joinObjectComponents [] = Overlapping (JsonObject [])
@@ -237,7 +257,7 @@ joinObjectComponents ((k, r):ps) = case (r, joinObjectComponents ps) of
     (MayOverlapping v1, Overlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
     (MayOverlapping v1, MayOverlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
     (_, NonOverlapping c2) -> NonOverlapping (\d -> case d of (JsonObject _) -> c2 d; _ -> MatchNothing) -- note that not remove k is correct
-    (NonOverlapping c1, _) -> NonOverlapping (\d -> case d of (JsonObject _) -> c1 (lookupObj k d); _ -> MatchNothing)
+    (NonOverlapping c1, _) -> NonOverlapping (\d -> case d of (JsonObject _) -> c1 (lookupObj' k d); _ -> MatchNothing)
 
 joinLeftOrPath :: ShapeRelation -> ShapeRelation -> ShapeRelation
 joinLeftOrPath r1 r2 = case (r1, r2) of
@@ -282,24 +302,51 @@ shapeOverlap tr1 tr2 = case (tr1, tr2) of
                         else MatchNothing
                 _ -> MatchNothing
             else -- have same length
-                joinTupleComponents (zipWith shapeOverlap ts1 ts2)
-    (Tuple _ ts1, Array t2) ->
-        joinTupleComponents (zipWith shapeOverlap ts1 (repeat t2))
-    (Array t1, Tuple _ ts2) ->
-        joinTupleComponents (zipWith shapeOverlap (repeat t1) ts2)
+                joinTupleComponents l1 l2 (zipWith shapeOverlap ts1 ts2)
+    (Tuple s1 ts1, Array t2) ->
+        joinTupleComponents (length ts1) 0 (zipWith shapeOverlap ts1 (repeat t2))
+    (Array t1, Tuple s2 ts2) ->
+        joinTupleComponents 0 (length ts2) (zipWith shapeOverlap (repeat t1) ts2)
     (Array t1, Array t2) ->
         Overlapping (JsonArray []) -- trivial case
     (NamedTuple s1 ps1, NamedTuple s2 ps2) ->
-        -- NamedTuple is non-strict
         let (common, fstOnly, sndOnly) = compareSortedListWith fst (sortWith fst ps1) (sortWith fst ps2)
-        in case joinObjectComponents [(k, shapeOverlap t1 t2) | ((k, t1), (_, t2)) <- common] of
-            Overlapping d -> Overlapping (extendObj d (example (NamedTuple Strict (fstOnly ++ sndOnly))))
-            MayOverlapping d -> MayOverlapping (extendObj d (example (NamedTuple Strict (fstOnly ++ sndOnly))))
-            NonOverlapping c -> NonOverlapping c
+        in case (s1, s2) of
+            (Strict, Strict) ->
+                if not (null fstOnly) then
+                    let k = fst (head fstOnly)
+                    in NonOverlapping (\d -> case d of (JsonObject _) -> if isJust (lookupObj k d) then MatchLeft else MatchRight; _ -> MatchNothing)
+                else if not (null sndOnly) then
+                    let k = fst (head sndOnly)
+                    in NonOverlapping (\d -> case d of (JsonObject _) -> if isJust (lookupObj k d) then MatchRight else MatchLeft; _ -> MatchNothing)
+                else joinObjectComponents [(k, shapeOverlap t1 t2) | ((k, t1), (_, t2)) <- common]
+            (Strict, Tolerant) ->
+                if not (null (filter (not . matchNull . snd) sndOnly)) then
+                    let k = fst (head (filter (not . matchNull . snd) sndOnly))
+                    in NonOverlapping (\d -> case d of (JsonObject _) -> if isJust (lookupObj k d) then MatchRight else MatchLeft; _ -> MatchNothing)
+                else
+                    case joinObjectComponents [(k, shapeOverlap t1 t2) | ((k, t1), (_, t2)) <- common] of
+                        Overlapping d -> Overlapping (extendObj d (example (NamedTuple Strict fstOnly)))
+                        MayOverlapping d -> MayOverlapping (extendObj d (example (NamedTuple Strict fstOnly)))
+                        NonOverlapping c -> NonOverlapping c
+            (Tolerant, Strict) ->
+                if not (null (filter (not . matchNull . snd) fstOnly)) then
+                    let k = fst (head (filter (not . matchNull . snd) fstOnly))
+                    in NonOverlapping (\d -> case d of (JsonObject _) -> if isJust (lookupObj k d) then MatchLeft else MatchRight; _ -> MatchNothing)
+                else
+                    case joinObjectComponents [(k, shapeOverlap t1 t2) | ((k, t1), (_, t2)) <- common] of
+                        Overlapping d -> Overlapping (extendObj d (example (NamedTuple Strict sndOnly)))
+                        MayOverlapping d -> MayOverlapping (extendObj d (example (NamedTuple Strict sndOnly)))
+                        NonOverlapping c -> NonOverlapping c
+            (Tolerant, Tolerant) ->
+                case joinObjectComponents [(k, shapeOverlap t1 t2) | ((k, t1), (_, t2)) <- common] of
+                    Overlapping d -> Overlapping (extendObj d (example (NamedTuple Strict (fstOnly ++ sndOnly))))
+                    MayOverlapping d -> MayOverlapping (extendObj d (example (NamedTuple Strict (fstOnly ++ sndOnly))))
+                    NonOverlapping c -> NonOverlapping c
     (NamedTuple _ ps1, TextMap t2) ->
-        joinObjectComponents [(k, shapeOverlap t1 t2) | (k, t1) <- ps1]
+        joinObjectComponents [(k, shapeOverlap t1 (Or Null t2)) | (k, t1) <- ps1]
     (TextMap t1, NamedTuple _ ps2) ->
-        joinObjectComponents [(k, shapeOverlap t1 t2) | (k, t2) <- ps2]
+        joinObjectComponents [(k, shapeOverlap (Or Null t1) t2) | (k, t2) <- ps2]
     (TextMap t1, TextMap t2) ->
         Overlapping (JsonObject []) -- trivial case
     (Or t1 t2, t3) ->
@@ -330,14 +377,17 @@ shapeOverlap tr1 tr2 = case (tr1, tr2) of
 data MatchResult = Matched | UnMatched UnMatchedReason deriving (Show)
 data UnMatchedReason = DirectCause DirectUMR CheckedSpec JsonData | StepCause StepUMR UnMatchedReason deriving (Show)
 
+instance Eq MatchResult where
+    a == b = case (a, b) of (Matched, Matched) -> True; (UnMatched _, UnMatched _) -> True; _ -> False
+
 data DirectUMR =
       ShapeNotMatch
     | ConstValueNotEqual
-    | TupleLengthNotMatch
-    | NamedTupleKeySetNotMatch
+    | TupleLengthNotEqual
+    | NamedTupleKeySetNotEqual
     | RefinedPropNotMatch --TODO: add prop description sentence
     | OrMatchNothing
-    deriving (Show)
+    deriving (Show, Eq, Ord)
 
 data StepUMR =
       TupleFieldNotMatch Int
@@ -348,10 +398,13 @@ data StepUMR =
     | OrNotMatchLeft
     | OrNotMatchRight
     | RefNotMatch Name
-    deriving (Show)
+    deriving (Show, Eq, Ord)
 
 isIdentifier :: String -> Bool
-isIdentifier _ = True --TODO:
+isIdentifier s = not (null s) && all isAlphaNum s
+
+showIdentifier :: String -> String
+showIdentifier s = if isIdentifier s then s else show s
 
 explain :: UnMatchedReason -> (DirectUMR, CheckedSpec, JsonData, String, String)
 explain reason = iter reason undefined [] where
@@ -450,16 +503,16 @@ matchOutline' t d = case (matchOutline t d) of Matched -> True; _ -> False
 matchSpec :: Env CheckedSpec -> CheckedSpec -> JsonData -> MatchResult
 matchSpec env t d = let rec = matchSpec env in case (t, d) of
     (Tuple Strict ts, d@(JsonArray xs)) ->
-        (let l1 = length ts; l2 = length xs in (l1 == l2) `otherwise` (DirectCause TupleLengthNotMatch t d)) <>
+        (let l1 = length ts; l2 = length xs in (l1 == l2) `otherwise` (DirectCause TupleLengthNotEqual t d)) <>
         fold [wrap (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts xs]
     (Tuple Tolerant ts, d@(JsonArray xs)) ->
         fold [wrap (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts (take (length ts) xs)]
     (Array t, (JsonArray xs)) -> fold [wrap (ArrayElementNotMatch i) (rec t x) | (i, x) <- zip [0..] xs]
     (NamedTuple Strict ps, d@(JsonObject kvs)) ->
-        ((S.fromList (map fst ps) == S.fromList (map fst kvs)) `otherwise` (DirectCause NamedTupleKeySetNotMatch t d)) <>
-        fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj k d)) | (k, t) <- ps]
+        (setEq (map fst ps) (map fst kvs) `otherwise` (DirectCause NamedTupleKeySetNotEqual t d)) <>
+        fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
     (NamedTuple Tolerant ps, d@(JsonObject kvs)) ->
-        fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj k d)) | (k, t) <- ps]
+        fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
     (TextMap t, (JsonObject kvs)) -> fold [wrap (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
     (t@(Refined t1 p), d) -> wrap RefinedShapeNotMatch (rec t1 d) <> (testProp p d `otherwise` (DirectCause RefinedPropNotMatch t d))
     (t@(Alternative t1 t2 makeChoice), d) -> case makeChoice d of
@@ -475,6 +528,8 @@ matchSpec' env t d = case (matchSpec env t d) of Matched -> True; _ -> False
 tryMatchSpec :: Env Spec -> Spec -> JsonData -> Either CheckFailedReason MatchResult
 tryMatchSpec env sp d = ((,) <$> checkEnv env <*> checkSpec env sp) >>= (\(env', sp') -> pure (matchSpec env' sp' d))
 
+tryMatchSpec' = tryMatchSpec M.empty
+
 -- everywhereJ
 
 type CheckedJson = (JsonData, CheckedSpec) -- also with a proof about (matchSpec' sp d = True)
@@ -484,7 +539,7 @@ everywhereJ env spec name g dat = rec spec dat where
     rec spec dat = case (spec, dat) of
         (Tuple _ ts, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | (t, x) <- zip ts xs]) >>= g
         (Array t, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | x <- xs]) >>= g
-        (NamedTuple _ ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k,) <$> rec t (lookupObj k d) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
+        (NamedTuple _ ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k,) <$> rec t (lookupObj' k d) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
         (TextMap t, (JsonObject kvs)) -> (JsonObject <$> sequence [(k,) <$> rec t v | (k, v) <- kvs]) >>= g
         (Refined t _, d) -> rec t d
         (Alternative t1 t2 makeChoice, d) -> case makeChoice d of
@@ -519,8 +574,14 @@ t1 = Or (NamedTuple Strict []) (Array Null)
 t2 = Number
 d = JsonArray []
 
-testAJ :: IO ()
-testAJ = do
+sp2 = Or Text (ConstNumber (-23.61212793298488))
+sp3 = Or (TextMap (Tuple Tolerant [ConstBoolean True, Null])) (NamedTuple Strict [("", Null)])
+sp3' = (TextMap (Tuple Tolerant [ConstBoolean True, Null]))
+d3 = example sp3
+sp4 = Or (TextMap (ConstNumber 123)) (NamedTuple Strict [("c", ConstBoolean True)])
+
+test :: IO ()
+test = do
     print (checkSpec env (Or Number Text))
     print (checkSpec env (Or (Or Number Text) (ConstText "abc")))
     print (checkSpec env (Or (Or Number Text) case1))
@@ -540,3 +601,9 @@ testAJ = do
     printZh (tryMatchSpec M.empty (Or t1 t2) d)
     printZh (tryMatchSpec M.empty (Or t2 t1) d)
 
+    print (checkSpec M.empty sp2)
+    printZh (tryMatchSpec M.empty sp2 (example sp2))
+    printZh (tryMatchSpec M.empty sp3 (example sp3))
+    printZh (tryMatchSpec M.empty sp4 (example sp4))
+
+testAJ = test
