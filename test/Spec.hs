@@ -18,7 +18,7 @@ isRight e = either (const False) (const True) e
 isMatched :: MatchResult -> Bool
 isMatched r = case r of Matched -> True; _ -> False
 
-matchSpec'' = matchSpec' M.empty
+matchSpec'' = matchSpec M.empty
 
 arbId :: Gen String
 arbId = elements ["a", "b", "c", "d", "e"]
@@ -80,10 +80,14 @@ mergeSorted [] ys = ys
 mergeSorted xs [] = xs
 mergeSorted (x:xs) (y:ys) = if y < x then y : mergeSorted (x:xs) ys else x : mergeSorted xs (y:ys)
 
+(<?>) :: (Testable p) => p -> String -> Property
+(<?>) = flip (Test.QuickCheck.counterexample . ("Extra Info: " ++))
+infixl 2 <?>
+
 main :: IO ()
 main = hspec $ do
-  describe "Prelude.head" $ do
-    prop "compareSortedListWith is correct" $
+  describe "compareSortedListWith" $ do
+    prop "correct" $
       \(ori_xs :: [Int]) (ori_ys :: [Int]) ->
         let (xs, ys) = (sort ori_xs, sort ori_ys)
             (both, onlyL, onlyR) = compareSortedListWith id xs ys
@@ -93,6 +97,7 @@ main = hspec $ do
           (case (compareSortedListWith id onlyL onlyR) of (both', _, _) -> both' === []) .&&.
           (case (compareSortedListWith id bothL bothR) of (both', _, _) -> both' === both)
 
+  describe "AlgebraicJSON" $ do
     prop "example-matchSpec" $
       \(sp :: Spec) ->
         let rst = tryMatchSpec M.empty sp (example sp)
@@ -101,7 +106,27 @@ main = hspec $ do
     prop "matchSpec-Or-commutative" $
       \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
         let rst = (,) <$> checkSpec M.empty (Or sp1 sp2) <*> checkSpec M.empty (Or sp2 sp1)
-        in isRight rst ==> case rst of Right (or1, or2) -> (let r1 = matchSpec'' or1 d; r2 = matchSpec'' or2 d in collect (r1, r2) $ r1 === r2)
+        in isRight rst ==> case rst of Right (or1, or2) -> (let r1 = matchSpec'' or1 d; r2 = matchSpec'' or2 d in collect (r1 == Matched) $ r1 === r2)
+
+    prop "checkSpec-Or-commutative" $
+      \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
+        let rst1 = checkSpec M.empty (Or sp1 sp2)
+            rst2 = checkSpec M.empty (Or sp2 sp1)
+        in isRight rst1 === isRight rst2
+
+    prop "checkSpec-overlapping-evidence-correct" $
+      \(sp1 :: Spec) (sp2 :: Spec) ->
+        let rst = checkSpec M.empty (Or sp1 sp2)
+        in not (isRight rst) ==> case rst of
+          Left (ExistOverlappingOr sp1' sp2' evi) ->
+            (matchSpec'' sp1' evi === Matched .&&. matchSpec'' sp2' evi === Matched) <?> show (sp1', sp2', evi)
+          _ -> label "not ExistOverlappingOr" True
+
+    prop "matchSpec- Or a b >= a" $
+      \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
+        let rst = checkSpec M.empty (Or sp1 sp2)
+        in isRight rst ==> case rst of
+          Right or1@(Alternative sp1' sp2' _) -> matchSpec'' sp1' d == Matched ==> matchSpec'' or1 d == Matched
 
     it "works with some simple cases" $ do
       show (checkSpec env (Or Number Text)) `shouldBe` "Right (Number | Text)"
