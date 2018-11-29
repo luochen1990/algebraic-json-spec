@@ -1,0 +1,3 @@
+--qc-max-success=1000
+--qc-max-discard=100
+--qc-max-size=20
