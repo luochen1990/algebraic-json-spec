@@ -128,6 +128,15 @@ main = hspec $ do
         in isRight rst ==> case rst of
           Right or1@(Alternative sp1' sp2' _) -> matchSpec'' sp1' d == Matched ==> matchSpec'' or1 d === Matched
 
+    prop "matchSpec-Tolerant-Tuple-accept-redurant-null" $
+      \(sps :: [Spec]) (ds :: [JsonData]) ->
+        let rst = checkSpec M.empty (Tuple Tolerant sps)
+        in isRight rst ==> case rst of
+          Right sp ->
+            let d1 = JsonArray ds
+                d2 = JsonArray (ds ++ [JsonNull])
+            in matchSpec'' sp d1 == Matched ==> matchSpec'' sp d2 === Matched <?> show (sp, d1, d2)
+
     it "works with some simple cases" $ do
       show (checkSpec env (Or Number Text)) `shouldBe` "Right (Number | Text)"
       show (checkSpec env (Or (Or Number Text) (ConstText "abc"))) `shouldBe` "Left (ExistOverlappingOr (Number | Text) \"abc\" \"abc\")"
