@@ -225,6 +225,7 @@ checkEnv env = M.fromList <$> sequence [(k,) <$> wrapL (InvalidItemInEnv k) (che
 matchNull :: TypeRep -> Bool
 matchNull tr = case tr of
     Null -> True
+    Anything -> True
     Or t1 t2 -> matchNull t1 || matchNull t2
     _ -> False
 
@@ -287,16 +288,22 @@ joinRightOrPath r1 r2 = case (r1, r2) of
             (MatchNothing, MatchNothing) -> MatchNothing
             _ -> MatchNothing -- seems impossible
 
+
+notNullPrefix :: Strictness -> [TypeRep] -> [TypeRep]
+{-# INLINE notNullPrefix #-}
+notNullPrefix s = if s == Strict then id else reverse . dropWhile matchNull . reverse
+
+pad :: Strictness -> [TypeRep] -> [TypeRep]
+{-# INLINE pad #-}
+pad s ts = if s == Strict then ts else ts ++ repeat Anything
+
 shapeOverlap :: Shape -> Shape -> ShapeRelation
 shapeOverlap tr1 tr2 = case (tr1, tr2) of
     (Tuple s1 ts1, Tuple s2 ts2) ->
-        let (l1, l2) = (length ts1, length ts2)
-            l1' = if s1 == Strict then l1 else length . dropWhile matchNull $ reverse ts1
-            l2' = if s2 == Strict then l2 else length . dropWhile matchNull $ reverse ts2
-            pad s ts = if s == Strict then ts else ts ++ repeat Anything
+        let (l1, l2, l1', l2') = (length ts1, length ts2, length (notNullPrefix s1 ts1), length (notNullPrefix s2 ts2))
             joinCommonParts = joinTupleComponents $ do
-                (t1, t2) <- (take (max l1 l2) $ zip (pad s1 ts1) (pad s2 ts2))
-                let onIndexOutOfRange = (if s1 == Tolerant && matchNull t1 then MatchLeft else if s2 == Tolerant && matchNull t2 then MatchRight else MatchNothing)
+                (i, (t1, t2)) <- zip [0..(max l1 l2)] $ zip (pad s1 ts1) (pad s2 ts2)
+                let onIndexOutOfRange = (if s1 == Tolerant && matchNull t1 && i >= l1' then MatchLeft else if s2 == Tolerant && matchNull t2 && i >= l2' then MatchRight else MatchNothing)
                 pure (shapeOverlap t1 t2, onIndexOutOfRange)
         in case (s1, s2) of
             (Strict, Strict) ->
@@ -324,9 +331,9 @@ shapeOverlap tr1 tr2 = case (tr1, tr2) of
             (Tolerant, Tolerant) ->
                 joinCommonParts
     (Tuple s1 ts1, Array t2) ->
-        joinTupleComponents (zip (zipWith shapeOverlap ts1 (repeat t2)) (repeat MatchRight))
+        joinTupleComponents (zip (zipWith shapeOverlap (notNullPrefix s1 ts1) (repeat t2)) (repeat MatchRight))
     (Array t1, Tuple s2 ts2) ->
-        joinTupleComponents (zip (zipWith shapeOverlap (repeat t1) ts2) (repeat MatchLeft))
+        joinTupleComponents (zip (zipWith shapeOverlap (repeat t1) (notNullPrefix s2 ts2)) (repeat MatchLeft))
     (Array t1, Array t2) ->
         Overlapping (JsonArray []) -- trivial case
     (NamedTuple s1 ps1, NamedTuple s2 ps2) ->

@@ -126,7 +126,7 @@ main = hspec $ do
       \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
         let rst = checkSpec M.empty (Or sp1 sp2)
         in isRight rst ==> case rst of
-          Right or1@(Alternative sp1' sp2' _) -> matchSpec'' sp1' d == Matched ==> matchSpec'' or1 d == Matched
+          Right or1@(Alternative sp1' sp2' _) -> matchSpec'' sp1' d == Matched ==> matchSpec'' or1 d === Matched
 
     it "works with some simple cases" $ do
       show (checkSpec env (Or Number Text)) `shouldBe` "Right (Number | Text)"
