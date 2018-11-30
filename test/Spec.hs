@@ -2,6 +2,7 @@
 
 {-# language ScopedTypeVariables #-}
 {-# language MonadComprehensions #-}
+{-# language TupleSections #-}
 
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -37,8 +38,11 @@ instance Arbitrary Strictness where
 
 instance Arbitrary TypeRep where
   arbitrary = sized tree' where
-    tree' 0 = oneof [pure Anything, pure Number, pure Text, pure Boolean, pure Null, ConstNumber <$> arbitrary, ConstText <$> arbId, ConstBoolean <$> arbitrary]
+    tree' 0 = oneof [
+      elements [Anything, Number, Text, Boolean, Null],
+      ConstNumber <$> arbitrary, ConstText <$> arbId, ConstBoolean <$> arbitrary]
     tree' n | n > 0 = oneof [
+      tree' 0,
       Tuple <$> arbitrary <*> (arbNat >>= \m -> vectorOf m (tree' ((n-1) `div` m))),
       Array <$> (tree' (n-1)),
       NamedTuple <$> arbitrary <*> (arbNat >>= \m -> arbMap m arbId (tree' ((n-1) `div` m))),
@@ -65,6 +69,7 @@ instance Arbitrary JsonData where
       JsonBoolean <$> arbitrary,
       pure JsonNull]
     tree' n | n > 0 = oneof [
+      tree' 0,
       JsonArray <$> (arbNat >>= \m -> vectorOf m (tree' ((n-1) `div` m))),
       JsonObject <$> (arbNat >>= \m -> arbMap m arbId (tree' ((n-1) `div` m)))]
   shrink d = case d of
@@ -83,6 +88,32 @@ mergeSorted (x:xs) (y:ys) = if y < x then y : mergeSorted (x:xs) ys else x : mer
 (<?>) :: (Testable p) => p -> String -> Property
 (<?>) = flip (Test.QuickCheck.counterexample . ("Extra Info: " ++))
 infixl 2 <?>
+
+checkedSpec :: Gen Spec
+checkedSpec = arbitrary `suchThatMap` (\sp -> either (const Nothing) Just $ checkSpec M.empty sp)
+
+matchedData :: TypeRep -> Gen JsonData
+--matchedData t = arbitrary `suchThat` (matchSpec' M.empty t)
+matchedData tr = sized (tree' tr) where
+  tree' tr = \n -> case tr of
+    Anything -> resize n arbitrary
+    Number -> JsonNumber <$> arbitrary
+    Text -> JsonText <$> arbitrary
+    Boolean -> JsonBoolean <$> arbitrary
+    Null -> pure $ JsonNull
+    ConstNumber m -> pure $ JsonNumber m
+    ConstText s -> pure $ JsonText s
+    ConstBoolean b -> pure $ JsonBoolean b
+    Tuple _ [] -> pure $ JsonArray [] --TODO: consider tolerant case
+    Tuple _ ts -> JsonArray <$> sequence (map (\t -> tree' t ((n-1) `div` (length ts))) ts) --TODO: consider tolerant case
+    Array t -> arbNat >>= \m -> JsonArray <$> vectorOf m (tree' t ((n-1) `div` m))
+    NamedTuple _ [] -> pure $ JsonObject [] --TODO: consider tolerant case
+    NamedTuple _ ps -> JsonObject <$> sequence [(k,) <$> tree' t ((n-1) `div` length ps) | (k, t) <- ps] --TODO: consider tolerant case
+    TextMap t -> arbNat >>= \m -> JsonObject <$> arbMap m arbId (tree' t ((n-1) `div` m))
+    Refined t p -> tree' t (n-1) `suchThat` testProp p
+    Ref name -> error "matchedData should not be used on Ref"
+    Or a b -> oneof [tree' a n, tree' b n]
+    Alternative a b _ ->  oneof [tree' a n, tree' b n]
 
 main :: IO ()
 main = hspec $ do
@@ -136,6 +167,19 @@ main = hspec $ do
             let d1 = JsonArray ds
                 d2 = JsonArray (ds ++ [JsonNull])
             in matchSpec'' sp d1 == Matched ==> matchSpec'' sp d2 === Matched <?> show (sp, d1, d2)
+
+    prop "matchedData-do-matchSpec" $
+      forAll checkedSpec $ \sp ->
+        forAll (matchedData sp) $ \d ->
+          matchSpec'' sp d === Matched
+
+    prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
+      forAll checkedSpec $ \sp1 ->
+        matchNull sp1 ==>
+          forAll arbNat $ \n ->
+            forAll (vectorOf n checkedSpec) $ \sps ->
+              forAll (matchedData (Tuple Tolerant sps)) $ \d ->
+                matchSpec'' (Tuple Tolerant (sps ++ [sp1])) d === Matched
 
     it "works with some simple cases" $ do
       show (checkSpec env (Or Number Text)) `shouldBe` "Right (Number | Text)"

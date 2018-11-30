@@ -5,8 +5,9 @@
 
 module AlgebraicJSON (
     Spec, TypeRep(..), Strictness(..),
-    JsonData(..),
+    JsonData(..), DecProp(..),
     checkSpec, matchSpec, matchSpec', tryMatchSpec, everywhereJ, example, MatchResult(..), CheckFailedReason(..),
+    matchNull,
     MultilingualShow(..), toShape, compareSortedListWith, testAJ
 ) where
 
