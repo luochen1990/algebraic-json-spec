@@ -1,14 +1,13 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Licensed under the Apache License 2.0.
 
 {-# language TupleSections #-}
-{-# language RankNTypes #-}
 
 module AlgebraicJSON (
     Spec, TypeRep(..), Strictness(..),
     JsonData(..), DecProp(..),
     checkSpec, matchSpec, matchSpec', tryMatchSpec, everywhereJ, example, MatchResult(..), CheckFailedReason(..),
     matchNull, notNullPrefix,
-    MultilingualShow(..), toShape, compareSortedListWith, testAJ
+    toShape, compareSortedListWith, testAJ
 ) where
 
 import Debug.Trace
@@ -20,6 +19,7 @@ import Data.Foldable (fold, foldMap)
 import Data.List (intercalate)
 import Data.Maybe
 import Data.Char (isAlphaNum)
+import Text.MultilingualShow
 import Control.Monad.State
 import GHC.Exts (sortWith)
 --import Data.Generics.Schemes (everywhereM)
@@ -28,21 +28,6 @@ import GHC.Exts (sortWith)
 --import Data.Data (Data)
 
 -- generic tools
-
-class MultilingualShow a where
-    showEnWith, showZhWith :: (forall a'. MultilingualShow a' => a' -> String) -> (a -> String)
-    showZhWith showPart = showEnWith showPart
-
-    showEn, showZh :: a -> String
-    showEn = showEnWith showEn
-    showZh = showZhWith showZh
-
-    printEn, printZh :: a -> IO ()
-    printEn = putStrLn . showEn
-    printZh = putStrLn . showZh
-
-instance (MultilingualShow a, MultilingualShow b) => MultilingualShow (Either a b) where
-    showEnWith f e = case e of Left x -> "Left " ++ f x; Right y -> "Right " ++ f y
 
 compareSortedListWith :: Ord b => (a -> b) -> [a] -> [a] -> ([(a, a)], [a], [a])
 compareSortedListWith key xs ys = iter xs ys [] [] [] where
