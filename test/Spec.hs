@@ -21,11 +21,15 @@ isMatched r = case r of Matched -> True; _ -> False
 
 matchSpec'' = matchSpec M.empty
 
-arbId :: Gen String
+arbId, arbId' :: Gen String
 arbId = elements ["a", "b", "c", "d", "e"]
+arbId' = arbId >>= \s -> pure ('_':s)
 
 arbNat :: Gen Int
 arbNat = elements [0, 1, 2]
+
+arbNatSized :: Int -> Gen Int
+arbNatSized n = resize n arbitrarySizedNatural
 
 arbSet :: Eq a => Int -> Gen a -> Gen [a]
 arbSet n k = vectorOf n k >>= pure . nub
@@ -104,11 +108,19 @@ matchedData tr = sized (tree' tr) where
     ConstNumber m -> pure $ JsonNumber m
     ConstText s -> pure $ JsonText s
     ConstBoolean b -> pure $ JsonBoolean b
-    Tuple _ [] -> pure $ JsonArray [] --TODO: consider tolerant case
-    Tuple _ ts -> JsonArray <$> sequence (map (\t -> tree' t ((n-1) `div` (length ts))) ts) --TODO: consider tolerant case
+    Tuple Strict ts -> JsonArray <$> sequence (map (\t -> tree' t ((n-1) `div` (length ts))) ts)
+    Tuple Tolerant ts ->
+      let ts' = notNullPrefix Tolerant ts; (l, l') = (length ts, length ts')
+      in arbNatSized (l - l' + 1) >>= \n ->
+        let ts'' = take (l' + n) (ts ++ repeat Anything) in matchedData (Tuple Strict ts'')
     Array t -> arbNat >>= \m -> JsonArray <$> vectorOf m (tree' t ((n-1) `div` m))
-    NamedTuple _ [] -> pure $ JsonObject [] --TODO: consider tolerant case
-    NamedTuple _ ps -> JsonObject <$> sequence [(k,) <$> tree' t ((n-1) `div` length ps) | (k, t) <- ps] --TODO: consider tolerant case
+    NamedTuple Strict ps -> JsonObject <$> sequence [(k,) <$> tree' t ((n-1) `div` length ps) | (k, t) <- ps]
+    NamedTuple Tolerant ps -> sequence [arbNatSized 1, arbNatSized 1, arbNatSized 3] >>= \[n1, n2, sz1] ->
+      arbMap n1 arbId' (resize sz1 arbitrary) >>= \ps1_ ->
+        let (ps2, ps1) = partition (matchNull . snd) ps
+            ps1' = ps1 ++ ps1_
+            ps2' = drop n2 ps2
+        in matchedData (NamedTuple Strict (ps1' ++ ps2'))
     TextMap t -> arbNat >>= \m -> JsonObject <$> arbMap m arbId (tree' t ((n-1) `div` m))
     Refined t p -> tree' t (n-1) `suchThat` testProp p
     Ref name -> error "matchedData should not be used on Ref"
@@ -178,8 +190,8 @@ main = hspec $ do
         matchNull sp1 ==>
           forAll arbNat $ \n ->
             forAll (vectorOf n checkedSpec) $ \sps ->
-              forAll (matchedData (Tuple Tolerant sps)) $ \d ->
-                matchSpec'' (Tuple Tolerant (sps ++ [sp1])) d === Matched
+              forAll (matchedData (Tuple Strict sps)) $ \d ->
+                let sp = (Tuple Tolerant (sps ++ [sp1])) in matchSpec'' sp d === Matched <?> show sp
 
     it "works with some simple cases" $ do
       show (checkSpec env (Or Number Text)) `shouldBe` "Right (Number | Text)"
