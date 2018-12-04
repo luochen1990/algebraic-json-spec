@@ -24,6 +24,7 @@ dependencies:
 - mtl
 - hspec
 - QuickCheck
+- data-fix
 
 library:
   source-dirs: src
