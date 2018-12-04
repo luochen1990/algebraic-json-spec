@@ -10,6 +10,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.List
 import Data.Fix
+import Data.Maybe (mapMaybe)
 import Control.Exception
 import Test.Hspec hiding (Spec, example)
 import Test.Hspec.QuickCheck
@@ -68,8 +69,12 @@ instance Arbitrary Spec where
     Null -> []
     _ -> [Fix Null]
 
+toSpec :: CSpec -> Spec
+toSpec (Fix tr) = Fix $ quadmap id id (const ()) toSpec tr
+
 instance Arbitrary CSpec where
   arbitrary = arbitrary `suchThatMap` (\sp -> either (const Nothing) Just $ checkSpec M.empty sp)
+  shrink csp = let sp' = toSpec csp in mapMaybe (\t -> either (const Nothing) Just (checkSpec M.empty t)) (shrink sp')
 
 instance Arbitrary JsonData where
   arbitrary = sized tree' where
@@ -98,9 +103,6 @@ mergeSorted (x:xs) (y:ys) = if y < x then y : mergeSorted (x:xs) ys else x : mer
 (<?>) :: (Testable p) => p -> String -> Property
 (<?>) = flip (Test.QuickCheck.counterexample . ("Extra Info: " ++))
 infixl 2 <?>
-
-checkedSpec :: Gen CSpec
-checkedSpec = arbitrary `suchThatMap` (\sp -> either (const Nothing) Just $ checkSpec M.empty sp)
 
 matchedData :: CSpec -> Gen JsonData
 --matchedData t = arbitrary `suchThat` (matchSpec' M.empty t)
@@ -187,15 +189,15 @@ main = hspec $ do
             in matchSpec'' sp d1 == Matched ==> matchSpec'' sp d2 === Matched <?> show (sp, d1, d2)
 
     prop "matchedData-do-matchSpec" $
-      forAll checkedSpec $ \sp ->
+      \(sp :: CSpec) ->
         forAll (matchedData sp) $ \d ->
           matchSpec'' sp d === Matched
 
     prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
-      forAll checkedSpec $ \sp1 ->
+      \(sp1 :: CSpec) ->
         (matchNull . toShape M.empty) sp1 ==>
           forAll arbNat $ \n ->
-            forAll (vectorOf n checkedSpec) $ \sps ->
+            forAll (vectorOf n arbitrary) $ \sps ->
               forAll (matchedData (Fix $ Tuple Strict sps)) $ \d ->
                 let sp = (Fix $ Tuple Tolerant (sps ++ [sp1])) in matchSpec'' sp d === Matched <?> show sp
 
