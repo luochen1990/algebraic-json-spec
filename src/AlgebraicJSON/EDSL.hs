@@ -1,8 +1,10 @@
+-- Copyright 2018 LuoChen (luochen1990@gmail.com). Apache License 2.0
+
 -- | Spec EDSL
 module AlgebraicJSON.EDSL where
 
 import Data.Fix
-import AlgebraicJSON (TyRep(..), Strictness(..), DecProp(..), Spec, Name)
+import AlgebraicJSON.Core.Definitions (TyRep(..), Strictness(..), DecProp(..), Spec, Name)
 
 tuple, tuple' :: [Spec] -> Spec
 tuple ts = Fix (Tuple Strict ts)
