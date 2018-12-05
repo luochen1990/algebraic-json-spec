@@ -103,6 +103,25 @@ isPrimTyRepNode tr = case tr of
 
 ------------------- useful instances about TyRep --------------------
 
+instance (Eq r, Eq p, Eq c, Eq tr') => Eq (TyRep r p c tr') where
+    tr1 == tr2 = case (tr1, tr2) of
+        (Anything, Anything) -> True
+        (Number, Number) -> True
+        (Text, Text) -> True
+        (Boolean, Boolean) -> True
+        (Null, Null) -> True
+        (ConstNumber n1, ConstNumber n2) -> n1 == n2
+        (ConstText s1, ConstText s2) -> s1 == s2
+        (ConstBoolean b1, ConstBoolean b2) -> b1 == b2
+        (Tuple s1 ts1, Tuple s2 ts2) -> s1 == s2 && ts1 == ts2
+        (Array t1, Array t2) -> t1 == t2
+        (NamedTuple s1 ps1, NamedTuple s2 ps2) -> s1 == s2 && ps1 == ps2
+        (TextMap t1, TextMap t2) -> t1 == t2
+        (Ref r1, Ref r2) -> r1 == r2
+        (Refined t1 p1, Refined t2 p2) -> t1 == t2 && p1 == p2
+        (Alternative a1 b1 c1, Alternative a2 b2 c2) -> a1 == a2 && b1 == b2 && c1 == c2
+        _ -> False
+
 class QuadFunctor f where
     quadmap :: (a -> a') -> (b -> b') -> (c -> c') -> (d -> d') -> f a b c d -> f a' b' c' d'
     quadmap1 :: (a -> a') -> f a b c d -> f a' b c d
@@ -212,6 +231,56 @@ example (Fix tr) = case tr of
     Ref _ -> error "example cannot be used on Ref"
     Refined t _ -> error "examplecannot be used on Refined"
     Alternative a b _ -> example a
+
+toJsonSpec :: Spec -> JsonData
+toJsonSpec (Fix tr) = case tr of
+    Anything -> tag "Anything"
+    Number -> tag "Number"
+    Text -> tag "Text"
+    Boolean -> tag "Boolean"
+    Null -> JsonNull
+    ConstNumber n -> JsonNumber n
+    ConstText s -> JsonText (escape s)
+    ConstBoolean b -> JsonBoolean b
+    Tuple Strict ts -> JsonArray (map toJsonSpec ts)
+    Tuple Tolerant ts -> JsonArray (tag "Tuple*" : map toJsonSpec ts)
+    Array t -> JsonArray [tag "Array", (toJsonSpec t)]
+    NamedTuple Strict ps -> JsonObject [(k, toJsonSpec t) | (k, t) <- ps]
+    NamedTuple Tolerant ps -> JsonArray [tag "NamedTuple*", JsonObject [(k, toJsonSpec t) | (k, t) <- ps]]
+    TextMap t -> JsonArray [tag "TextMap", (toJsonSpec t)]
+    Ref name -> JsonText ('$':name)
+    Refined t p -> JsonArray [tag "Refined", (toJsonSpec t)]
+    Alternative a b _ -> JsonArray [tag "Alternative", (toJsonSpec a), (toJsonSpec b)]
+    where
+        tag s = JsonText ('#':s)
+        escape s = case s of (c:s') -> if c `elem` ['#', '$', '\\'] then '\\':s else s; _ -> s
+
+fromJsonSpec :: JsonData -> Spec
+fromJsonSpec d = Fix $ case d of
+    JsonNull -> Null
+    JsonNumber n -> ConstNumber n
+    JsonText s -> case s of
+        ('#':s') -> case s' of
+            "Anything" -> Anything
+            "Number" -> Number
+            "Text" -> Text
+            "Boolean" -> Boolean
+        ('$':s') -> Ref s'
+        _ -> ConstText (unescape s)
+    JsonBoolean b -> ConstBoolean b
+    JsonArray xs -> case xs of
+        (JsonText "#Tuple" : xs') -> Tuple Strict (map fromJsonSpec xs')
+        (JsonText "#Tuple*" : xs') -> Tuple Tolerant (map fromJsonSpec xs')
+        (JsonText "#NamedTuple" : xs') -> case (head xs') of JsonObject ps -> NamedTuple Strict [(k, fromJsonSpec v) | (k, v) <- ps]
+        (JsonText "#NamedTuple*" : xs') -> case (head xs') of JsonObject ps -> NamedTuple Tolerant [(k, fromJsonSpec v) | (k, v) <- ps]
+        (JsonText "#Array" : xs') -> Array (fromJsonSpec (head xs'))
+        (JsonText "#TextMap" : xs') -> TextMap (fromJsonSpec (head xs'))
+        (JsonText "#Refined" : xs') -> Refined (fromJsonSpec (head xs')) undefined
+        (JsonText "#Alternative" : xs') -> Alternative (fromJsonSpec (head xs')) (fromJsonSpec (head (tail xs'))) ()
+        _ -> Tuple Strict (map fromJsonSpec xs)
+    JsonObject ps -> NamedTuple Strict [(k, fromJsonSpec v) | (k, v) <- ps]
+    where
+        unescape s = case s of ('\\':s') -> s'; _ -> s
 
 --------------------- trivial things about TyRep --------------------
 

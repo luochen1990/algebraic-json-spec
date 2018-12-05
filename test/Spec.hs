@@ -96,6 +96,10 @@ main = hspec $ do
               forAll (arbitraryJ (Fix $ Tuple Strict sps)) $ \d ->
                 let sp = (Fix $ Tuple Tolerant (sps ++ [sp1])) in matchSpec' sp d === Matched <?> show sp
 
+    prop "fromJsonSpec . toJsonSpec == identity" $
+      \(sp :: Spec) ->
+        toShape M.empty (fromJsonSpec (toJsonSpec sp)) === toShape M.empty sp
+
     it "works with some simple cases" $ do
       show (checkSpec env (number <|||> text)) `shouldBe` "Right (Number | Text)"
       show (checkSpec env ((number <|||> text) <|||> (ctext "abc"))) `shouldBe` "Left (ExistOverlappingOr (Number | Text) \"abc\" \"abc\")"
