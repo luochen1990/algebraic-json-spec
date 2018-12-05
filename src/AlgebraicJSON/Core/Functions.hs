@@ -1,7 +1,6 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Apache License 2.0
 
 {-# language TupleSections #-}
-{-# language FlexibleInstances #-}
 
 module AlgebraicJSON.Core.Functions (
     checkSpec, checkEnv, CheckFailedReason(..),
@@ -250,9 +249,6 @@ checkEnv env = M.fromList <$> sequence [(k,) <$> wrapL (InvalidItemInEnv k) (che
 
 wrapL :: (a -> a) -> Either a b -> Either a b
 wrapL f e = case e of Left x -> Left (f x); Right y -> Right y
-
-instance MultilingualShow CheckFailedReason where
-    showEnWith _ = show
 
 --------------------------- matchSpec -------------------------------
 
