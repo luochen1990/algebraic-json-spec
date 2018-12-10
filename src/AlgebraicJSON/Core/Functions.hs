@@ -1,9 +1,10 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Apache License 2.0
 
 {-# language TupleSections #-}
+{-# language RankNTypes #-}
 
 module AlgebraicJSON.Core.Functions (
-    checkSpec, checkEnv, CheckFailedReason(..),
+    checkSpec, checkEnv, checkAlternative, CheckFailedReason(..),
     matchSpec, tryMatchSpec,
     everywhereJ,
     shapeOverlap, ShapeRelation(..), Sureness(..), -- export for test
@@ -192,11 +193,13 @@ data CheckFailedReason =
 checkSpec :: Env Spec -> Spec -> Either CheckFailedReason CSpec
 checkSpec env = cataM f where
     f :: TyRep Name DecProp () CSpec -> Either CheckFailedReason CSpec
-    f (Alternative a b ()) = do
-        case shapeOverlap (toShape env a) (toShape env b) of
-            (NonOverlapping c) -> Right (Fix $ Alternative a b c)
-            (Overlapping su d) -> Left (ExistOverlappingOr su a b d)
+    f (Alternative a b ()) = checkAlternative env a b
     f tr = Right (Fix (quadmap3 undefined tr))
+
+checkAlternative :: forall p c. Env (Fix (TyRep Name p c)) -> CSpec -> CSpec -> Either CheckFailedReason CSpec
+checkAlternative env a b = case shapeOverlap (toShape env a) (toShape env b) of
+    (NonOverlapping c) -> Right (Fix $ Alternative a b c)
+    (Overlapping s d) -> Left (ExistOverlappingOr s a b d)
 
 -- | check (Env Spec) to get (Env CSpec)
 checkEnv :: Env Spec -> Either CheckFailedReason (Env CSpec)

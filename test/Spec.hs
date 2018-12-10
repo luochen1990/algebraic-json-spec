@@ -50,8 +50,8 @@ main = hspec $ do
         in isDeterminateShape sh ==> matchSpec M.empty sp (example sh) === Matched
 
     prop "matchSpec-Or-commutative" $
-      \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
-        let rst = (,) <$> checkSpec M.empty (sp1 <|||> sp2) <*> checkSpec M.empty (sp2 <|||> sp1)
+      \(sp1 :: CSpec) (sp2 :: CSpec) (d :: JsonData) ->
+        let rst = (,) <$> checkAlternative M.empty sp1 sp2 <*> checkAlternative M.empty sp2 sp1
         in isRight rst ==> case rst of Right (or1, or2) -> (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
 
     prop "checkSpec-Or-commutative" $
