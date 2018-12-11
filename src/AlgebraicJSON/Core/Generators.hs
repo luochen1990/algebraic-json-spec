@@ -64,6 +64,7 @@ instance Arbitrary Spec where
       Fix <$> (Array <$> (tree' (n-1))),
       Fix <$> (NamedTuple <$> arbitrary <*> (arbNat >>= \m -> arbMap m arbKey (tree' ((n-1) `div` m)))),
       Fix <$> (TextMap <$> (tree' (n-1))),
+      Fix <$> (Refined <$> (tree' (n-1)) <*> pure (DecProp (const True))),
       Fix <$> (Alternative <$> tree' ((n-1) `div` 2) <*> tree' ((n-1) `div` 2) <*> pure ())]
   shrink (Fix tr) = case tr of
     Tuple s ts -> Fix Null : ts ++ [Fix $ Tuple s ts' | ts' <- shrinkList shrink ts] ++ [Fix $ Tuple Strict ts | s == Tolerant]

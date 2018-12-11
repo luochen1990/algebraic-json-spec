@@ -176,7 +176,7 @@ instance Traversable (TyRep r p c) where
 
 ---------------------- useful tools about TyRep ---------------------
 
--- | shadow matching, only process trivial cases, no recursion
+-- | shadow matching, only returns False on very obvious cases, no recursion
 matchOutline :: TyRep r p c tr' -> JsonData -> Bool
 matchOutline tr d = case (tr, d) of
     (Anything, _) -> True
@@ -184,14 +184,14 @@ matchOutline tr d = case (tr, d) of
     (Text, (JsonText _)) -> True
     (Boolean, (JsonBoolean _)) -> True
     (Null, JsonNull) -> True
-    (ConstNumber n, d@(JsonNumber n')) -> if (n == n') then True else False
-    (ConstText s, d@(JsonText s')) -> if (s == s') then True else False
-    (ConstBoolean b, d@(JsonBoolean b')) -> if (b == b') then True else False
+    (ConstNumber n, (JsonNumber n')) -> n == n'
+    (ConstText s, (JsonText s')) -> s == s'
+    (ConstBoolean b, (JsonBoolean b')) -> b == b'
     (Tuple _ _, (JsonArray _)) -> True
     (Array _, (JsonArray _)) -> True
     (NamedTuple _ _, (JsonObject _)) -> True
     (TextMap _, (JsonObject _)) -> True
-    (Refined t _, d) -> True
+    (Refined _ _, _) -> True
     (Ref _, _) -> True
     (Alternative _ _ _, _) -> True
     _ -> False
@@ -356,24 +356,41 @@ toShape env sp = evalState (cataM g sp) S.empty where
             --traceM ("name: " ++ name)
             visd <- get
             if name `S.member` visd
-            then pure (Fix Anything)
+            then pure (Fix (Ref ()))
             else do
                 modify (S.insert name)
                 r <- cataM g (env M.! name)
                 modify (S.delete name)
                 return r
-        Refined t _ -> pure t
+        Refined t _ -> pure (Fix (Refined t ()))
         Alternative t1 t2 _ -> pure (Fix $ Alternative t1 t2 ())
         t -> pure (Fix $ quadmap (const ()) (const ()) (const ()) id t)
 
+-- | decide whether a shape contains no blackbox item
+isDeterminateShape :: Shape -> Bool
+isDeterminateShape = cata f where
+    f tr = case tr of
+        Tuple _ ts -> and ts
+        Array t -> t
+        NamedTuple _ ps -> and (map snd ps)
+        TextMap t -> t
+        Ref _ -> False -- blackbox item
+        Refined t _ -> False -- blackbox item
+        Alternative a b _ -> a && b
+        _ -> True
+
+-- | decide whether a shape accept JsonNull, treat blackbox item as True
 acceptNull :: Shape -> Bool
 acceptNull (Fix tr) = case tr of
     Null -> True
     Anything -> True
     Alternative t1 t2 _ -> acceptNull t1 || acceptNull t2
+    Ref _ -> True -- blackbox item
+    Refined t _ -> acceptNull t -- blackbox item
     _ -> False
 
--- | generate example JsonData along a specific Shape
+-- | generate example JsonData along a specific Shape,
+-- | not rigorous: example matches the Spec only when it's shape isDeterminateShape
 example :: Shape -> JsonData
 example (Fix tr) = case tr of
     Anything -> JsonNull
@@ -388,8 +405,8 @@ example (Fix tr) = case tr of
     Array t -> JsonArray [(example t)]
     NamedTuple _ ps -> JsonObject [(k, example t) | (k, t) <- ps]
     TextMap t -> JsonObject [("k", example t)]
-    Ref _ -> error "example cannot be used on Ref"
-    Refined t _ -> error "examplecannot be used on Refined"
+    Ref _ -> JsonNull --NOTE: not a rigorous example
+    Refined t _ -> example t --NOTE: not a rigorous example
     Alternative a b _ -> example a
 
 toJsonSpec :: Spec -> JsonData

@@ -45,9 +45,9 @@ main = hspec $ do
 
   describe "AlgebraicJSON" $ do
     prop "example-matchSpec" $
-      \(sp :: Spec) ->
-        let rst = tryMatchSpec M.empty sp (example (toShape M.empty sp))
-        in isRight rst ==> case rst of Right r -> r === Matched
+      \(sp :: CSpec) ->
+        let sh = toShape M.empty sp
+        in isDeterminateShape sh ==> matchSpec M.empty sp (example sh) === Matched
 
     prop "matchSpec-Or-commutative" $
       \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
@@ -64,9 +64,9 @@ main = hspec $ do
       \(sp1 :: Spec) (sp2 :: Spec) ->
         let rst = checkSpec M.empty (sp1 <|||> sp2)
         in not (isRight rst) ==> case rst of
-          Left (ExistOverlappingOr sp1' sp2' evi) ->
+          Left (ExistOverlappingOr Sure sp1' sp2' evi) ->
             (matchSpec' sp1' evi === Matched .&&. matchSpec' sp2' evi === Matched) <?> show (sp1', sp2', evi)
-          _ -> label "not ExistOverlappingOr" True
+          _ -> label "not Overlapping Sure" True
 
     prop "matchSpec- Or a b >= a" $
       \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
@@ -102,16 +102,16 @@ main = hspec $ do
 
     it "works with some simple cases" $ do
       show (checkSpec env (number <|||> text)) `shouldBe` "Right (Number | Text)"
-      show (checkSpec env ((number <|||> text) <|||> (ctext "abc"))) `shouldBe` "Left (ExistOverlappingOr (Number | Text) \"abc\" \"abc\")"
+      show (checkSpec env ((number <|||> text) <|||> (ctext "abc"))) `shouldBe` "Left (ExistOverlappingOr Sure (Number | Text) \"abc\" \"abc\")"
       show (checkSpec env ((number <|||> text) <|||> case1)) `shouldBe` "Right ((Number | Text) | (\"Lit\", Number))"
       show (checkSpec env ((number <|||> text) <|||> case2)) `shouldBe` "Right ((Number | Text) | (\"Add\", AST, AST))"
       show (checkSpec env ((number <|||> text) <|||> ast)) `shouldBe` "Right ((Number | Text) | ((\"Lit\", Number) | (\"Add\", AST, AST)))"
       show (checkSpec env ((number <|||> text) <|||> case1')) `shouldBe` "Right ((Number | Text) | (\"Lit\", 1.0))"
-      show (checkSpec env ((number <|||> text) <|||> (case1 <|||> case1'))) `shouldBe` "Left (ExistOverlappingOr (\"Lit\", Number) (\"Lit\", 1.0) [\"Lit\", 1.0])"
-      show (toShape env ast) `shouldBe` "((\"Lit\", Number) |? (\"Add\", ((\"Lit\", Number) |? (\"Add\", Anything, Anything)), ((\"Lit\", Number) |? (\"Add\", Anything, Anything))))"
+      show (checkSpec env ((number <|||> text) <|||> (case1 <|||> case1'))) `shouldBe` "Left (ExistOverlappingOr Sure (\"Lit\", Number) (\"Lit\", 1.0) [\"Lit\", 1.0])"
+      show (toShape env ast) `shouldBe` "((\"Lit\", Number) |? (\"Add\", ((\"Lit\", Number) |? (\"Add\", $, $)), ((\"Lit\", Number) |? (\"Add\", $, $))))"
       show (checkSpec env (spec1 <|||> spec2)) `shouldBe` "Right ({x: Number, y: Number, *} | {z: Number, x: Text, *})"
-      show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
-      show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
+      show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
+      show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
       show (tryMatchSpec env ast dat1) `shouldBe` "Right Matched"
       show (tryMatchSpec env ast dat2) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (TupleFieldNotMatch 1) (DirectCause OutlineNotMatch Number \"1\"))))"
       show (tryMatchSpec env spec3 data3) `shouldBe` "Right (UnMatched (StepCause (NamedTupleFieldNotMatch \"y\") (StepCause (NamedTupleFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\"))))"

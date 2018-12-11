@@ -6,7 +6,7 @@ module AlgebraicJSON.Core.Functions (
     checkSpec, checkEnv, CheckFailedReason(..),
     matchSpec, tryMatchSpec,
     everywhereJ,
-    shapeOverlap, ShapeRelation(..) -- export for test
+    shapeOverlap, ShapeRelation(..), Sureness(..), -- export for test
 ) where
 
 --import Debug.Trace
@@ -28,9 +28,11 @@ import AlgebraicJSON.Core.Definitions
 
 -- | the overlapping relation of two Shape
 data ShapeRelation =
-      Overlapping JsonData
-    | MayOverlapping JsonData -- sometimes we cannot be sure, since there are Refined node.
+      Overlapping Sureness JsonData -- sometimes we cannot be sure, since there are Refined node.
     | NonOverlapping ChoiceMaker
+    deriving (Show)
+
+data Sureness = Sure | Unsure deriving (Show, Eq)
 
 shapeOverlap :: Shape -> Shape -> ShapeRelation
 shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
@@ -57,7 +59,7 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
     (Array t1, Tuple s2 ts2) ->
         joinTupleComponents (zip (zipWith shapeOverlap (repeat t1) (notNullPrefix s2 ts2)) (repeat MatchLeft))
     (Array t1, Array t2) ->
-        Overlapping (JsonArray []) -- trivial case
+        Overlapping Sure (JsonArray []) -- trivial case
     (NamedTuple s1 ps1, NamedTuple s2 ps2) ->
         let (common, fstOnly, sndOnly) = compareSortedListWith fst (sortWith fst ps1) (sortWith fst ps2)
             joinCommonParts = joinObjectComponents $ do
@@ -78,46 +80,56 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
                     let k = fst (head (filter (not . acceptNull . snd) sndOnly))
                     in NonOverlapping (ViaObjectHasKey k MatchRight)
                 else
-                    case joinCommonParts of
-                        Overlapping d -> Overlapping (extendObj d (example (Fix $ NamedTuple Strict fstOnly)))
-                        MayOverlapping d -> MayOverlapping (extendObj d (example (Fix $ NamedTuple Strict fstOnly)))
-                        NonOverlapping c -> NonOverlapping c
+                    extendOverlappingEvidenceObj fstOnly joinCommonParts
             (Tolerant, Strict) ->
                 if not (null (filter (not . acceptNull . snd) fstOnly)) then
                     let k = fst (head (filter (not . acceptNull . snd) fstOnly))
                     in NonOverlapping (ViaObjectHasKey k MatchLeft)
                 else
-                    case joinCommonParts of
-                        Overlapping d -> Overlapping (extendObj d (example (Fix $ NamedTuple Strict sndOnly)))
-                        MayOverlapping d -> MayOverlapping (extendObj d (example (Fix $ NamedTuple Strict sndOnly)))
-                        NonOverlapping c -> NonOverlapping c
+                    extendOverlappingEvidenceObj sndOnly joinCommonParts
             (Tolerant, Tolerant) ->
-                case joinCommonParts of
-                    Overlapping d -> Overlapping (extendObj d (example (Fix $ NamedTuple Strict (fstOnly ++ sndOnly))))
-                    MayOverlapping d -> MayOverlapping (extendObj d (example (Fix $ NamedTuple Strict (fstOnly ++ sndOnly))))
-                    NonOverlapping c -> NonOverlapping c
+                extendOverlappingEvidenceObj (fstOnly ++ sndOnly) joinCommonParts
     (NamedTuple s1 ps1, TextMap t2) ->
         joinObjectComponents [(k, shapeOverlap t1 t2, MatchRight) | (k, t1) <- ps1, s1 == Strict || not (acceptNull t1)]
     (TextMap t1, NamedTuple s2 ps2) ->
         joinObjectComponents [(k, shapeOverlap t1 t2, MatchLeft) | (k, t2) <- ps2, s2 == Strict || not (acceptNull t2)]
     (TextMap t1, TextMap t2) ->
-        Overlapping (JsonObject []) -- trivial case
+        Overlapping Sure (JsonObject []) -- trivial case
     (Alternative t1 t2 _, t3) ->
         joinLeftOrPath (shapeOverlap t1 (Fix t3)) (shapeOverlap t2 (Fix t3))
     (t1, Alternative t2 t3 _) ->
         joinRightOrPath (shapeOverlap (Fix t1) t2) (shapeOverlap (Fix t1) t3)
-    (Anything, t) -> Overlapping (example (Fix t)) -- trivial case
-    (t, Anything) -> Overlapping (example (Fix t)) -- trivial case
-    (Refined _ _, _) -> error "shapeOverlap cannot process Refined"
-    (_, Refined _ _) -> error "shapeOverlap cannot process Refined"
-    (Ref _, _) -> error "shapeOverlap cannot process Ref"
-    (_, Ref _) -> error "shapeOverlap cannot process Ref"
+    (Refined t1 _, t2) -> blurShapeRelation (shapeOverlap t1 (Fix t2)) -- Refined condition is treated as blackbox
+    (t1, Refined t2 _) -> blurShapeRelation (shapeOverlap (Fix t1) t2) -- Refined condition is treated as blackbox
+    (Ref _, t) -> Overlapping Unsure (example (Fix t)) -- Ref () is treated as blackbox
+    (t, Ref _) -> Overlapping Unsure (example (Fix t)) -- Ref () is treated as blackbox
+    (Anything, t) -> Overlapping (if isDeterminateShape (Fix t) then Sure else Unsure) (example (Fix t))
+    (t, Anything) -> Overlapping (if isDeterminateShape (Fix t) then Sure else Unsure) (example (Fix t))
     _ -> --NOTE: these trivial cases, depending on matchOutline, it's correctness is subtle.
-        if matchOutline tr2 (example shape1) then Overlapping (example shape1)
-        else if matchOutline tr1 (example shape2) then Overlapping (example shape2)
+        if matchOutline tr2 (example shape1) then Overlapping Sure (example shape1)
+        else if matchOutline tr1 (example shape2) then Overlapping Sure (example shape2)
         else NonOverlapping (ViaOutline tr1 tr2)
 
 --------------- trivial things used in shapeOverlap -----------------
+
+instance Semigroup Sureness where
+    (<>) = mappend
+
+instance Monoid Sureness where
+    mempty = Sure
+    mappend Sure Sure = Sure
+    mappend _ _ = Unsure
+
+-- | change Sure to Unsure when Overlapping
+blurShapeRelation :: ShapeRelation -> ShapeRelation
+blurShapeRelation sr = case sr of Overlapping Sure d -> Overlapping Unsure d; _ -> sr
+
+extendOverlappingEvidenceObj :: [(String, Shape)] -> ShapeRelation -> ShapeRelation
+extendOverlappingEvidenceObj ps sr = case sr of
+    Overlapping s d -> let sh' = (Fix $ NamedTuple Strict ps) in Overlapping (s <> sureness sh') (extendObj d (example sh'))
+    NonOverlapping c -> NonOverlapping c
+    where
+        sureness sh = if isDeterminateShape sh then Sure else Unsure
 
 notNullPrefix :: Strictness -> [Shape] -> [Shape]
 {-# INLINE notNullPrefix #-}
@@ -128,47 +140,42 @@ pad :: Strictness -> [Shape] -> [Shape]
 pad s ts = if s == Strict then ts else ts ++ repeat (Fix Anything)
 
 joinTupleComponents :: [(ShapeRelation, MatchChoice)] -> ShapeRelation
-joinTupleComponents [] = Overlapping (JsonArray [])
+joinTupleComponents [] = Overlapping Sure (JsonArray [])
 joinTupleComponents ((r, onIndexOutOfRange):rs) = case (r, joinTupleComponents rs) of
-    (Overlapping d1, Overlapping (JsonArray ds)) -> Overlapping (JsonArray (d1:ds))
-    (Overlapping d1, MayOverlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
-    (MayOverlapping d1, Overlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
-    (MayOverlapping d1, MayOverlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
+    (Overlapping s1 d1, Overlapping s2 (JsonArray ds)) -> Overlapping (s1 <> s2) (JsonArray (d1:ds))
     (NonOverlapping c, _) -> NonOverlapping (ViaArrayElement 0 onIndexOutOfRange c)
     (_, NonOverlapping (ViaArrayElement i mc c')) -> NonOverlapping (ViaArrayElement (i+1) onIndexOutOfRange c')
 
 joinObjectComponents :: [(String, ShapeRelation, MatchChoice)] -> ShapeRelation
-joinObjectComponents [] = Overlapping (JsonObject [])
+joinObjectComponents [] = Overlapping Sure (JsonObject [])
 joinObjectComponents ((k, r, onKeyNotExist):ps) = case (r, joinObjectComponents ps) of
-    (Overlapping v1, Overlapping (JsonObject kvs)) -> Overlapping (JsonObject ((k,v1):kvs))
-    (Overlapping v1, MayOverlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
-    (MayOverlapping v1, Overlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
-    (MayOverlapping v1, MayOverlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
+    (Overlapping s1 v1, Overlapping s2 (JsonObject kvs)) -> Overlapping (s1 <> s2) (JsonObject ((k,v1):kvs))
     (NonOverlapping c, _) -> NonOverlapping (ViaObjectField k onKeyNotExist c)
     (_, NonOverlapping c) -> NonOverlapping c
 
+-- | for the case (t1 | t2) | t3, name (shapeOverlap t1 t3) as r1, (shapeOverlap t2 t3) as r2
 joinLeftOrPath :: ShapeRelation -> ShapeRelation -> ShapeRelation
 joinLeftOrPath r1 r2 = case (r1, r2) of
-    (Overlapping d1, _) -> Overlapping d1
-    (_, Overlapping d2) -> Overlapping d2
-    (MayOverlapping d1, _) -> MayOverlapping d1
-    (_, MayOverlapping d2) -> MayOverlapping d2
+    (Overlapping Sure d1, _) -> Overlapping Sure d1
+    (_, Overlapping Sure d2) -> Overlapping Sure d2
+    (Overlapping Unsure d1, _) -> Overlapping Unsure d1
+    (_, Overlapping Unsure d2) -> Overlapping Unsure d2
     (NonOverlapping c13, NonOverlapping c23) -> NonOverlapping (ViaOrL c13 c23)
 
+-- | for the case t1 | (t2 | t3), name (shapeOverlap t1 t2) as r1, (shapeOverlap t1 t3) as r2
 joinRightOrPath :: ShapeRelation -> ShapeRelation -> ShapeRelation
 joinRightOrPath r1 r2 = case (r1, r2) of
-    (Overlapping d1, _) -> Overlapping d1
-    (_, Overlapping d2) -> Overlapping d2
-    (MayOverlapping d1, _) -> MayOverlapping d1
-    (_, MayOverlapping d2) -> MayOverlapping d2
+    (Overlapping Sure d1, _) -> Overlapping Sure d1
+    (_, Overlapping Sure d2) -> Overlapping Sure d2
+    (Overlapping Unsure d1, _) -> Overlapping Unsure d1
+    (_, Overlapping Unsure d2) -> Overlapping Unsure d2
     (NonOverlapping c12, NonOverlapping c13) -> NonOverlapping (ViaOrR c12 c13)
 
 ----------------------- checkSpec & checkEnv ------------------------
 
 -- | representation of the reason why we failed to check a Spec
 data CheckFailedReason =
-      ExistOverlappingOr CSpec CSpec JsonData
-    | ExistMayOverlappingOr CSpec CSpec JsonData
+      ExistOverlappingOr Sureness CSpec CSpec JsonData
     | InvalidItemInEnv Name CheckFailedReason
     deriving (Show)
 
@@ -179,8 +186,7 @@ checkSpec env = cataM f where
     f (Alternative a b ()) = do
         case shapeOverlap (toShape env a) (toShape env b) of
             (NonOverlapping c) -> Right (Fix $ Alternative a b c)
-            (Overlapping d) -> Left (ExistOverlappingOr a b d)
-            (MayOverlapping d) -> Left (ExistMayOverlappingOr a b d)
+            (Overlapping su d) -> Left (ExistOverlappingOr su a b d)
     f tr = Right (Fix (quadmap3 undefined tr))
 
 -- | check (Env Spec) to get (Env CSpec)
