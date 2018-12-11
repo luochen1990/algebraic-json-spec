@@ -55,17 +55,8 @@ lookupObj' k (JsonObject kvs) = (fromMaybe JsonNull (M.lookup k (M.fromList kvs)
 lookupObj' _ _ = error "lookupObj' must be used on JsonObject"
 
 ---------------------------------------------------------------------
-------------------- Spec & CSpec & Shape & TyRep --------------------
+------------------------------ TyRep --------------------------------
 ---------------------------------------------------------------------
-
--- | the Spec parsed from user input
-type Spec = Fix (TyRep Name DecProp ())
-
--- | the checked Spec, attached with choice maker
-type CSpec = Fix (TyRep Name DecProp ChoiceMaker)
-
--- | the Shape of a Spec, ignore Ref, Refined information of Spec
-type Shape = Fix (TyRep () () ())
 
 -- | TyRep r p c tr' is a generic representation of Spec & CSpec & Shape,
 -- | with Ref indexed by r, Refined with p, Alternative attached with c,
@@ -185,6 +176,175 @@ instance Traversable (TyRep r p c) where
 
 ---------------------- useful tools about TyRep ---------------------
 
+-- | shadow matching, only process trivial cases, no recursion
+matchOutline :: TyRep r p c tr' -> JsonData -> Bool
+matchOutline tr d = case (tr, d) of
+    (Anything, _) -> True
+    (Number, (JsonNumber _)) -> True
+    (Text, (JsonText _)) -> True
+    (Boolean, (JsonBoolean _)) -> True
+    (Null, JsonNull) -> True
+    (ConstNumber n, d@(JsonNumber n')) -> if (n == n') then True else False
+    (ConstText s, d@(JsonText s')) -> if (s == s') then True else False
+    (ConstBoolean b, d@(JsonBoolean b')) -> if (b == b') then True else False
+    (Tuple _ _, (JsonArray _)) -> True
+    (Array _, (JsonArray _)) -> True
+    (NamedTuple _ _, (JsonObject _)) -> True
+    (TextMap _, (JsonObject _)) -> True
+    (Refined t _, d) -> True
+    (Ref _, _) -> True
+    (Alternative _ _ _, _) -> True
+    _ -> False
+
+--------------------- trivial things about TyRep --------------------
+
+-- | strictness label for Tuple & NamedTuple
+data Strictness = Strict | Tolerant deriving (Show, Eq, Ord)
+
+instance (ShowRef r, ShowAlternative c, Show tr') => Show (TyRep r p c tr') where
+    show tr = case tr of
+        Anything -> "Anything"
+        Number -> "Number"
+        Text -> "Text"
+        Boolean -> "Boolean"
+        Null -> "Null"
+        ConstNumber n -> show n
+        ConstText s -> show s
+        ConstBoolean b -> show b
+        Tuple Strict ts -> "(" ++ intercalate ", " (map show ts) ++ ")"
+        Tuple Tolerant ts -> "(" ++ intercalate ", " (map show ts ++ ["*"]) ++ ")"
+        Array t -> "Array<" ++ show t ++ ">"
+        NamedTuple Strict ps -> "{" ++ intercalate ", " [showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ "}"
+        NamedTuple Tolerant ps -> "{" ++ intercalate ", " ([showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ ["*"]) ++ "}"
+        TextMap t -> "Map<" ++ show t ++ ">"
+        Ref name -> showRef name
+        Refined t _ -> "Refined<" ++ show t ++ ">"
+        Alternative a b c -> "(" ++ show a ++ bar ++ show b ++ ")" where
+            bar = " " ++ showAlternative c ++ " "
+
+instance {-# Overlapping #-} (ShowRef r, ShowAlternative c) => Show (Fix (TyRep r p c)) where
+    show (Fix tr) = show tr
+
+class ShowRef a where
+    showRef :: a -> String
+
+instance ShowRef [Char] where
+    showRef s = s
+
+instance ShowRef () where
+    showRef () = "$"
+
+class ShowAlternative a where
+    showAlternative :: a -> String
+
+instance ShowAlternative () where
+    showAlternative _ = "|?"
+
+---------------------------------------------------------------------
+----------------------- Spec & CSpec & Shape ------------------------
+---------------------------------------------------------------------
+
+-- | the Spec parsed from user input
+type Spec = Fix (TyRep Name DecProp ())
+
+-- | the checked Spec, attached with choice maker
+type CSpec = Fix (TyRep Name DecProp ChoiceMaker)
+
+-- | the Shape of a Spec, ignore Ref, Refined information of Spec
+type Shape = Fix (TyRep () () ())
+
+---------------------------- Name & Env -----------------------------
+
+-- | the name of a user defined Spec
+type Name = String
+
+-- | the environment which contains information a
+type Env a = M.Map Name a
+
+------------------------------ DecProp ------------------------------
+
+-- | a decidable proposition about JsonData
+data DecProp = DecProp {testProp :: JsonData -> Bool}
+
+---------------------------- ChoiceMaker ----------------------------
+
+-- | a matching choice maked by choice maker
+data MatchChoice = MatchNothing | MatchLeft | MatchRight deriving (Show, Eq, Ord)
+
+flipMatchChoice :: MatchChoice -> MatchChoice
+flipMatchChoice mc = case mc of
+    MatchRight -> MatchLeft
+    MatchLeft -> MatchRight
+    MatchNothing -> MatchNothing
+
+-- | a choice maker helps to make choice on Alternative node
+-- | also an evidence of two shape not overlapping
+data ChoiceMaker =
+      ViaArrayLength Int Int
+    | ViaArrayLengthGT Int MatchChoice
+    | ViaObjectHasKey String MatchChoice
+    | ViaOutline (TyRep () () () Shape) (TyRep () () () Shape)
+    | ViaArrayElement Int MatchChoice ChoiceMaker
+    | ViaObjectField String MatchChoice ChoiceMaker
+    | ViaOrL ChoiceMaker ChoiceMaker
+    | ViaOrR ChoiceMaker ChoiceMaker
+    deriving (Show, Eq)
+
+-- | a ChoiceMaker can be interpreted as a function directly
+makeChoice :: ChoiceMaker -> JsonData -> MatchChoice
+makeChoice cm = case cm of
+    ViaArrayLength l1 l2 -> \d -> case d of
+        (JsonArray xs) ->
+            let l = length xs
+            in
+                if l == l1 then MatchLeft
+                else if l == l2 then MatchRight
+                else MatchNothing
+        _ -> MatchNothing
+    ViaArrayLengthGT l r ->
+        let r' = flipMatchChoice r
+        in \d -> case d of
+            (JsonArray xs) ->
+                if length xs > l then r else r'
+            _ -> MatchNothing
+    ViaObjectHasKey k r ->
+        let r' = flipMatchChoice r
+        in \d -> case d of
+            (JsonObject _) ->
+                if isJust (lookupObj k d) then r else r'
+            _ -> MatchNothing
+    ViaOutline tr1 tr2 -> \d ->
+        if (matchOutline tr1 d) then MatchLeft
+        else if (matchOutline tr2 d) then MatchRight
+        else MatchNothing
+    ViaArrayElement i dft c -> \d -> case d of
+        (JsonArray xs) ->
+            if i < length xs then makeChoice c (xs !! i) else dft
+        _ -> MatchNothing
+    ViaObjectField k dft c -> \d -> case d of
+        (JsonObject ps) ->
+            maybe dft (makeChoice c) (lookupObj k d)
+        _ -> MatchNothing
+    ViaOrL c13 c23 -> \d ->
+        case (makeChoice c13 d, makeChoice c23 d) of
+            (MatchLeft, _) -> MatchLeft -- t1/t2 of course
+            (_, MatchLeft) -> MatchLeft -- t2 of course
+            (MatchRight, MatchRight) -> MatchRight -- t3 of course
+            (MatchNothing, MatchNothing) -> MatchNothing
+            _ -> MatchNothing -- seems impossible
+    ViaOrR c12 c13 -> \d ->
+        case (makeChoice c12 d, makeChoice c13 d) of
+            (MatchRight, _) -> MatchRight -- t2/t3 of course
+            (_, MatchRight) -> MatchRight -- t3 of course
+            (MatchLeft, MatchLeft) -> MatchLeft -- t1 of course
+            (MatchNothing, MatchNothing) -> MatchNothing
+            _ -> MatchNothing -- seems impossible
+
+instance ShowAlternative ChoiceMaker where
+    showAlternative _ = "|"
+
+-------------- useful tools about Spec & CSpec & Shape --------------
+
 toSpec :: CSpec -> Spec
 toSpec (Fix tr) = Fix $ quadmap id id (const ()) toSpec tr
 
@@ -211,26 +371,6 @@ acceptNull (Fix tr) = case tr of
     Null -> True
     Anything -> True
     Alternative t1 t2 _ -> acceptNull t1 || acceptNull t2
-    _ -> False
-
--- | shadow matching, only process trivial cases, no recursion
-matchOutline :: TyRep r p c tr' -> JsonData -> Bool
-matchOutline tr d = case (tr, d) of
-    (Anything, _) -> True
-    (Number, (JsonNumber _)) -> True
-    (Text, (JsonText _)) -> True
-    (Boolean, (JsonBoolean _)) -> True
-    (Null, JsonNull) -> True
-    (ConstNumber n, d@(JsonNumber n')) -> if (n == n') then True else False
-    (ConstText s, d@(JsonText s')) -> if (s == s') then True else False
-    (ConstBoolean b, d@(JsonBoolean b')) -> if (b == b') then True else False
-    (Tuple _ _, (JsonArray _)) -> True
-    (Array _, (JsonArray _)) -> True
-    (NamedTuple _ _, (JsonObject _)) -> True
-    (TextMap _, (JsonObject _)) -> True
-    (Refined t _, d) -> True
-    (Ref _, _) -> True
-    (Alternative _ _ _, _) -> True
     _ -> False
 
 -- | generate example JsonData along a specific Shape
@@ -302,69 +442,6 @@ fromJsonSpec d = Fix $ case d of
     where
         unescape s = case s of ('\\':s') -> s'; _ -> s
 
---------------------- trivial things about TyRep --------------------
-
--- | the name of a user defined Spec
-type Name = String
-
--- | the environment which contains information a
-type Env a = M.Map Name a
-
--- | a decidable proposition about JsonData
-data DecProp = DecProp {testProp :: JsonData -> Bool}
-
--- | a choice maker helps to make choice on Alternative node
-type ChoiceMaker = JsonData -> MatchChoice
-
--- | a matching choice maked by choice maker
-data MatchChoice = MatchLeft | MatchRight | MatchNothing deriving (Show, Eq, Ord)
-
--- | strictness label for Tuple & NamedTuple
-data Strictness = Strict | Tolerant deriving (Show, Eq, Ord)
-
-
-instance (ShowRef r, ShowAlternative c, Show tr') => Show (TyRep r p c tr') where
-    show tr = case tr of
-        Anything -> "Anything"
-        Number -> "Number"
-        Text -> "Text"
-        Boolean -> "Boolean"
-        Null -> "Null"
-        ConstNumber n -> show n
-        ConstText s -> show s
-        ConstBoolean b -> show b
-        Tuple Strict ts -> "(" ++ intercalate ", " (map show ts) ++ ")"
-        Tuple Tolerant ts -> "(" ++ intercalate ", " (map show ts ++ ["*"]) ++ ")"
-        Array t -> "Array<" ++ show t ++ ">"
-        NamedTuple Strict ps -> "{" ++ intercalate ", " [showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ "}"
-        NamedTuple Tolerant ps -> "{" ++ intercalate ", " ([showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ ["*"]) ++ "}"
-        TextMap t -> "Map<" ++ show t ++ ">"
-        Ref name -> showRef name
-        Refined t _ -> "Refined<" ++ show t ++ ">"
-        Alternative a b c -> "(" ++ show a ++ bar ++ show b ++ ")" where
-            bar = " " ++ showAlternative c ++ " "
-
-instance {-# Overlapping #-} (ShowRef r, ShowAlternative c) => Show (Fix (TyRep r p c)) where
-    show (Fix tr) = show tr
-
-class ShowRef a where
-    showRef :: a -> String
-
-instance ShowRef [Char] where
-    showRef s = s
-
-instance ShowRef () where
-    showRef () = "$"
-
-class ShowAlternative a where
-    showAlternative :: a -> String
-
-instance ShowAlternative ChoiceMaker where
-    showAlternative _ = "|"
-
-instance ShowAlternative () where
-    showAlternative _ = "|?"
-
 ---------------------------------------------------------------------
 ---------------------------- MatchResult ----------------------------
 ---------------------------------------------------------------------
@@ -426,7 +503,7 @@ instance MultilingualShow MatchResult where
 
 instance MultilingualShow UnMatchedReason where
     showEnWith _ r =
-        let (direct, sp, d, specPath, dataPath) = explain r
+        let (direct, sp, d, specPath, dataPath) = explainUnMatchedReason r
         in "  Abstract: it" ++ dataPath ++ " should be a " ++ show sp ++ ", but got " ++ show d ++
             "\n  Direct Cause: " ++ show direct ++
             "\n    Spec: " ++ show sp ++
@@ -434,7 +511,7 @@ instance MultilingualShow UnMatchedReason where
             "\n  Spec Path: " ++ specPath ++
             "\n  Data Path: " ++ dataPath
     showZhWith _ r =
-        let (direct, sp, d, specPath, dataPath) = explain r
+        let (direct, sp, d, specPath, dataPath) = explainUnMatchedReason r
         in "  摘要: it" ++ dataPath ++ " 应该是一个 " ++ show sp ++ ", 但这里是 " ++ show d ++
             "\n  直接原因: " ++ show direct ++
             "\n    规格: " ++ show sp ++
@@ -442,8 +519,8 @@ instance MultilingualShow UnMatchedReason where
             "\n  规格路径: " ++ specPath ++
             "\n  数据路径: " ++ dataPath
 
-explain :: UnMatchedReason -> (DirectUMR, CSpec, JsonData, String, String)
-explain reason = iter reason undefined [] where
+explainUnMatchedReason :: UnMatchedReason -> (DirectUMR, CSpec, JsonData, String, String)
+explainUnMatchedReason reason = iter reason undefined [] where
     iter reason dc path = case reason of
         DirectCause dr sp d -> (dr, sp, d, concatMap specAccessor path, concatMap dataAccessor path)
         StepCause sr r -> iter r dc (path ++ [sr])

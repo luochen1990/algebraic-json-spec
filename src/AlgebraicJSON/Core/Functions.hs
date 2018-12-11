@@ -42,27 +42,14 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
                 pure (shapeOverlap t1 t2, onIndexOutOfRange)
         in case (s1, s2) of
             (Strict, Strict) ->
-                if l1 /= l2
-                then NonOverlapping $ \d -> case d of
-                    (JsonArray xs) ->
-                        let l = length xs
-                        in
-                            if l == l1 then MatchLeft
-                            else if l == l2 then MatchRight
-                            else MatchNothing
-                    _ -> MatchNothing
-                else -- have same length
-                    joinCommonParts
+                if l1 /= l2 then NonOverlapping (ViaArrayLength l1 l2)
+                else joinCommonParts
             (Strict, Tolerant) ->
-                if l1 < l2' then
-                    NonOverlapping (\d -> case d of (JsonArray xs) -> if length xs > l1 then MatchRight else MatchLeft; _ -> MatchNothing)
-                else
-                    joinCommonParts
+                if l1 < l2' then NonOverlapping (ViaArrayLengthGT l1 MatchRight)
+                else joinCommonParts
             (Tolerant, Strict) ->
-                if l1' > l2 then
-                    NonOverlapping (\d -> case d of (JsonArray xs) -> if length xs > l2 then MatchLeft else MatchRight; _ -> MatchNothing)
-                else
-                    joinCommonParts
+                if l1' > l2 then NonOverlapping (ViaArrayLengthGT l2 MatchLeft)
+                else joinCommonParts
             (Tolerant, Tolerant) ->
                 joinCommonParts
     (Tuple s1 ts1, Array t2) ->
@@ -81,15 +68,15 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
             (Strict, Strict) ->
                 if not (null fstOnly) then
                     let k = fst (head fstOnly)
-                    in NonOverlapping (\d -> case d of (JsonObject _) -> if isJust (lookupObj k d) then MatchLeft else MatchRight; _ -> MatchNothing)
+                    in NonOverlapping (ViaObjectHasKey k MatchLeft)
                 else if not (null sndOnly) then
                     let k = fst (head sndOnly)
-                    in NonOverlapping (\d -> case d of (JsonObject _) -> if isJust (lookupObj k d) then MatchRight else MatchLeft; _ -> MatchNothing)
+                    in NonOverlapping (ViaObjectHasKey k MatchRight)
                 else joinCommonParts
             (Strict, Tolerant) ->
                 if not (null (filter (not . acceptNull . snd) sndOnly)) then
                     let k = fst (head (filter (not . acceptNull . snd) sndOnly))
-                    in NonOverlapping (\d -> case d of (JsonObject _) -> if isJust (lookupObj k d) then MatchRight else MatchLeft; _ -> MatchNothing)
+                    in NonOverlapping (ViaObjectHasKey k MatchRight)
                 else
                     case joinCommonParts of
                         Overlapping d -> Overlapping (extendObj d (example (Fix $ NamedTuple Strict fstOnly)))
@@ -98,7 +85,7 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
             (Tolerant, Strict) ->
                 if not (null (filter (not . acceptNull . snd) fstOnly)) then
                     let k = fst (head (filter (not . acceptNull . snd) fstOnly))
-                    in NonOverlapping (\d -> case d of (JsonObject _) -> if isJust (lookupObj k d) then MatchLeft else MatchRight; _ -> MatchNothing)
+                    in NonOverlapping (ViaObjectHasKey k MatchLeft)
                 else
                     case joinCommonParts of
                         Overlapping d -> Overlapping (extendObj d (example (Fix $ NamedTuple Strict sndOnly)))
@@ -121,18 +108,14 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
         joinRightOrPath (shapeOverlap (Fix t1) t2) (shapeOverlap (Fix t1) t3)
     (Anything, t) -> Overlapping (example (Fix t)) -- trivial case
     (t, Anything) -> Overlapping (example (Fix t)) -- trivial case
-    (Refined _ _, _) ->
-        error "shapeOverlap cannot process Refined"
-    (_, Refined _ _) ->
-        error "shapeOverlap cannot process Refined"
-    (Ref _, _) ->
-        error "shapeOverlap cannot process Ref"
-    (_, Ref _) ->
-        error "shapeOverlap cannot process Ref"
+    (Refined _ _, _) -> error "shapeOverlap cannot process Refined"
+    (_, Refined _ _) -> error "shapeOverlap cannot process Refined"
+    (Ref _, _) -> error "shapeOverlap cannot process Ref"
+    (_, Ref _) -> error "shapeOverlap cannot process Ref"
     _ -> --NOTE: these trivial cases, depending on matchOutline, it's correctness is subtle.
         if matchOutline tr2 (example shape1) then Overlapping (example shape1)
         else if matchOutline tr1 (example shape2) then Overlapping (example shape2)
-        else NonOverlapping $ \d -> if (matchOutline tr1 d) then MatchLeft else if (matchOutline tr2 d) then MatchRight else MatchNothing
+        else NonOverlapping (ViaOutline tr1 tr2)
 
 --------------- trivial things used in shapeOverlap -----------------
 
@@ -151,14 +134,8 @@ joinTupleComponents ((r, onIndexOutOfRange):rs) = case (r, joinTupleComponents r
     (Overlapping d1, MayOverlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
     (MayOverlapping d1, Overlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
     (MayOverlapping d1, MayOverlapping (JsonArray ds)) -> MayOverlapping (JsonArray (d1:ds))
-    (_, NonOverlapping c2) -> NonOverlapping (\d -> case d of
-        (JsonArray (x:xs)) -> c2 (JsonArray xs)
-        (JsonArray []) -> onIndexOutOfRange
-        _ -> MatchNothing)
-    (NonOverlapping c1, _) -> NonOverlapping (\d -> case d of
-        (JsonArray (x:xs)) -> c1 x
-        (JsonArray []) -> onIndexOutOfRange
-        _ -> MatchNothing)
+    (NonOverlapping c, _) -> NonOverlapping (ViaArrayElement 0 onIndexOutOfRange c)
+    (_, NonOverlapping (ViaArrayElement i mc c')) -> NonOverlapping (ViaArrayElement (i+1) onIndexOutOfRange c')
 
 joinObjectComponents :: [(String, ShapeRelation, MatchChoice)] -> ShapeRelation
 joinObjectComponents [] = Overlapping (JsonObject [])
@@ -167,8 +144,8 @@ joinObjectComponents ((k, r, onKeyNotExist):ps) = case (r, joinObjectComponents 
     (Overlapping v1, MayOverlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
     (MayOverlapping v1, Overlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
     (MayOverlapping v1, MayOverlapping (JsonObject kvs)) -> MayOverlapping (JsonObject ((k,v1):kvs))
-    (_, NonOverlapping c2) -> NonOverlapping (\d -> case d of (JsonObject _) -> c2 d; _ -> MatchNothing) -- note that not remove k is correct
-    (NonOverlapping c1, _) -> NonOverlapping (\d -> case d of (JsonObject _) -> maybe onKeyNotExist c1 (lookupObj k d); _ -> MatchNothing)
+    (NonOverlapping c, _) -> NonOverlapping (ViaObjectField k onKeyNotExist c)
+    (_, NonOverlapping c) -> NonOverlapping c
 
 joinLeftOrPath :: ShapeRelation -> ShapeRelation -> ShapeRelation
 joinLeftOrPath r1 r2 = case (r1, r2) of
@@ -176,13 +153,7 @@ joinLeftOrPath r1 r2 = case (r1, r2) of
     (_, Overlapping d2) -> Overlapping d2
     (MayOverlapping d1, _) -> MayOverlapping d1
     (_, MayOverlapping d2) -> MayOverlapping d2
-    (NonOverlapping c13, NonOverlapping c23) -> NonOverlapping $ \d ->
-        case (c13 d, c23 d) of
-            (MatchLeft, _) -> MatchLeft -- t1/t2 of course
-            (_, MatchLeft) -> MatchLeft -- t2 of course
-            (MatchRight, MatchRight) -> MatchRight -- t3 of course
-            (MatchNothing, MatchNothing) -> MatchNothing
-            _ -> MatchNothing -- seems impossible
+    (NonOverlapping c13, NonOverlapping c23) -> NonOverlapping (ViaOrL c13 c23)
 
 joinRightOrPath :: ShapeRelation -> ShapeRelation -> ShapeRelation
 joinRightOrPath r1 r2 = case (r1, r2) of
@@ -190,13 +161,7 @@ joinRightOrPath r1 r2 = case (r1, r2) of
     (_, Overlapping d2) -> Overlapping d2
     (MayOverlapping d1, _) -> MayOverlapping d1
     (_, MayOverlapping d2) -> MayOverlapping d2
-    (NonOverlapping c12, NonOverlapping c13) -> NonOverlapping $ \d ->
-        case (c12 d, c13 d) of
-            (MatchRight, _) -> MatchRight -- t2/t3 of course
-            (_, MatchRight) -> MatchRight -- t3 of course
-            (MatchLeft, MatchLeft) -> MatchLeft -- t1 of course
-            (MatchNothing, MatchNothing) -> MatchNothing
-            _ -> MatchNothing -- seems impossible
+    (NonOverlapping c12, NonOverlapping c13) -> NonOverlapping (ViaOrR c12 c13)
 
 ----------------------- checkSpec & checkEnv ------------------------
 
@@ -243,7 +208,7 @@ matchSpec env spec@(Fix t) d = let rec = matchSpec env in case (t, d) of
         fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
     (TextMap t, (JsonObject kvs)) -> fold [wrap (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
     (t@(Refined t1 p), d) -> wrap RefinedShapeNotMatch (rec t1 d) <> (testProp p d `otherwise` (DirectCause RefinedPropNotMatch spec d))
-    (t@(Alternative t1 t2 makeChoice), d) -> case makeChoice d of
+    (t@(Alternative t1 t2 c), d) -> case makeChoice c d of
         MatchLeft -> wrap OrNotMatchLeft (rec t1 d)
         MatchRight -> wrap OrNotMatchRight (rec t2 d)
         MatchNothing -> UnMatched (DirectCause OrMatchNothing spec d)
@@ -265,7 +230,7 @@ everywhereJ env spec name g dat = rec spec dat where
         (NamedTuple _ ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k,) <$> rec t (lookupObj' k d) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
         (TextMap t, (JsonObject kvs)) -> (JsonObject <$> sequence [(k,) <$> rec t v | (k, v) <- kvs]) >>= g
         (Refined t _, d) -> rec t d
-        (Alternative t1 t2 makeChoice, d) -> case makeChoice d of
+        (Alternative t1 t2 c, d) -> case makeChoice c d of
             MatchLeft -> rec t1 d
             MatchRight -> rec t2 d
             MatchNothing -> error "everywhereJ not used correctly (1)"
