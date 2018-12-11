@@ -97,14 +97,14 @@ arbitraryJ spec@(Fix tr) = sized (tree' tr) where
     ConstBoolean b -> pure $ JsonBoolean b
     Tuple Strict ts -> JsonArray <$> sequence (map (\(Fix t) -> tree' t ((n-1) `div` (length ts))) ts)
     Tuple Tolerant ts ->
-      let ts' = (reverse . dropWhile (matchNull . toShape M.empty) . reverse) ts; (l, l') = (length ts, length ts')
+      let ts' = (reverse . dropWhile (acceptNull . toShape M.empty) . reverse) ts; (l, l') = (length ts, length ts')
       in arbNatSized (l - l' + 1) >>= \n ->
         let ts'' = take (l' + n) (ts ++ repeat (Fix Anything)) in arbitraryJ (Fix $ Tuple Strict ts'')
     Array (Fix t) -> arbNat >>= \m -> JsonArray <$> vectorOf m (tree' t ((n-1) `div` m))
     NamedTuple Strict ps -> JsonObject <$> sequence [(k,) <$> tree' t ((n-1) `div` length ps) | (k, (Fix t)) <- ps]
     NamedTuple Tolerant ps -> sequence [arbNatSized 1, arbNatSized 1, arbNatSized 3] >>= \[n1, n2, sz1] ->
       arbMap n1 arbKey' (resize sz1 arbitrary) >>= \ps1_ ->
-        let (ps2, ps1) = partition (matchNull . toShape M.empty . snd) ps
+        let (ps2, ps1) = partition (acceptNull . toShape M.empty . snd) ps
             ps1' = ps1 ++ ps1_
             ps2' = drop n2 ps2
         in arbitraryJ (Fix $ NamedTuple Strict (ps1' ++ ps2'))

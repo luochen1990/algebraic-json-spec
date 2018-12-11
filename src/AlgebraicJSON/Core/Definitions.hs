@@ -206,11 +206,31 @@ toShape env sp = evalState (cataM g sp) S.empty where
         Alternative t1 t2 _ -> pure (Fix $ Alternative t1 t2 ())
         t -> pure (Fix $ quadmap (const ()) (const ()) (const ()) id t)
 
-matchNull :: Shape -> Bool
-matchNull (Fix tr) = case tr of
+acceptNull :: Shape -> Bool
+acceptNull (Fix tr) = case tr of
     Null -> True
     Anything -> True
-    Alternative t1 t2 _ -> matchNull t1 || matchNull t2
+    Alternative t1 t2 _ -> acceptNull t1 || acceptNull t2
+    _ -> False
+
+-- | shadow matching, only process trivial cases, no recursion
+matchOutline :: TyRep r p c tr' -> JsonData -> Bool
+matchOutline tr d = case (tr, d) of
+    (Anything, _) -> True
+    (Number, (JsonNumber _)) -> True
+    (Text, (JsonText _)) -> True
+    (Boolean, (JsonBoolean _)) -> True
+    (Null, JsonNull) -> True
+    (ConstNumber n, d@(JsonNumber n')) -> if (n == n') then True else False
+    (ConstText s, d@(JsonText s')) -> if (s == s') then True else False
+    (ConstBoolean b, d@(JsonBoolean b')) -> if (b == b') then True else False
+    (Tuple _ _, (JsonArray _)) -> True
+    (Array _, (JsonArray _)) -> True
+    (NamedTuple _ _, (JsonObject _)) -> True
+    (TextMap _, (JsonObject _)) -> True
+    (Refined t _, d) -> True
+    (Ref _, _) -> True
+    (Alternative _ _ _, _) -> True
     _ -> False
 
 -- | generate example JsonData along a specific Shape
@@ -383,7 +403,6 @@ data UnMatchedReason = DirectCause DirectUMR CSpec JsonData | StepCause StepUMR 
 -- | direct unmatch reason, a part of UnMatchedReason
 data DirectUMR =
       OutlineNotMatch
-    | ConstValueNotEqual
     | TupleLengthNotEqual
     | NamedTupleKeySetNotEqual
     | RefinedPropNotMatch --TODO: add prop description sentence

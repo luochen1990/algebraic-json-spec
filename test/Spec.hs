@@ -90,7 +90,7 @@ main = hspec $ do
 
     prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
       \(sp1 :: CSpec) ->
-        (matchNull . toShape M.empty) sp1 ==>
+        (acceptNull . toShape M.empty) sp1 ==>
           forAll arbNat $ \n ->
             forAll (vectorOf n arbitrary) $ \sps ->
               forAll (arbitraryJ (Fix $ Tuple Strict sps)) $ \d ->
