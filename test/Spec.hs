@@ -85,16 +85,19 @@ main = hspec $ do
 
     prop "arbitraryJ-generated-data-do-matchSpec" $
       \(sp :: CSpec) ->
-        forAll (arbitraryJ sp) $ \d ->
-          matchSpec' sp d === Matched
+        isDeterminateShape (toShape M.empty sp) ==>
+          forAll (arbitraryJ sp) $ \d ->
+            matchSpec' sp d === Matched
 
     prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
       \(sp1 :: CSpec) ->
-        (acceptNull . toShape M.empty) sp1 ==>
+        let sh1 = toShape M.empty sp1 in acceptNull sh1 && isDeterminateShape sh1 ==>
           forAll arbNat $ \n ->
             forAll (vectorOf n arbitrary) $ \sps ->
-              forAll (arbitraryJ (Fix $ Tuple Strict sps)) $ \d ->
-                let sp = (Fix $ Tuple Tolerant (sps ++ [sp1])) in matchSpec' sp d === Matched <?> show sp
+              let sp = (Fix $ Tuple Strict sps)
+              in isDeterminateShape (toShape M.empty sp) ==>
+                forAll (arbitraryJ sp) $ \d ->
+                  let sp' = (Fix $ Tuple Tolerant (sps ++ [sp1])) in matchSpec' sp' d === Matched <?> show sp'
 
     prop "fromJsonSpec . toJsonSpec == identity" $
       \(sp :: Spec) ->

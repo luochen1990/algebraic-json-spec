@@ -50,8 +50,20 @@ instance Arbitrary JsonData where
     JsonNull -> []
     _ -> [JsonNull]
 
+instance CoArbitrary JsonData where
+  coarbitrary d = case d of
+    JsonNumber x -> variant 0 . coarbitrary x
+    JsonText s -> variant 1 . coarbitrary s
+    JsonBoolean b -> variant 2 . coarbitrary b
+    JsonNull -> variant 3
+    JsonArray xs -> variant 4 . coarbitrary xs
+    JsonObject ps -> variant 5 . coarbitrary ps
+
 instance Arbitrary Strictness where
   arbitrary = elements [Strict, Tolerant]
+
+instance Arbitrary DecProp where
+  arbitrary = DecProp <$> arbitrary
 
 instance Arbitrary Spec where
   arbitrary = sized tree' where
@@ -64,7 +76,7 @@ instance Arbitrary Spec where
       Fix <$> (Array <$> (tree' (n-1))),
       Fix <$> (NamedTuple <$> arbitrary <*> (arbNat >>= \m -> arbMap m arbKey (tree' ((n-1) `div` m)))),
       Fix <$> (TextMap <$> (tree' (n-1))),
-      Fix <$> (Refined <$> (tree' (n-1)) <*> pure (DecProp (const True))),
+      Fix <$> (arbNatSized (n-1) >>= \k -> (Refined <$> (tree' (n-1-k)) <*> resize k arbitrary)),
       Fix <$> (Alternative <$> tree' ((n-1) `div` 2) <*> tree' ((n-1) `div` 2) <*> pure ())]
   shrink (Fix tr) = case tr of
     Tuple s ts -> Fix Null : ts ++ [Fix $ Tuple s ts' | ts' <- shrinkList shrink ts] ++ [Fix $ Tuple Strict ts | s == Tolerant]

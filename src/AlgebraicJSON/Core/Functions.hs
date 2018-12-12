@@ -15,7 +15,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Semigroup
 import Data.Foldable (fold, foldMap)
-import Data.List (intercalate)
+import Data.List (partition)
 import Data.Maybe
 import Data.Fix
 import Text.MultilingualShow
@@ -55,9 +55,11 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
             (Tolerant, Tolerant) ->
                 joinCommonParts
     (Tuple s1 ts1, Array t2) ->
-        joinTupleComponents (zip (zipWith shapeOverlap (notNullPrefix s1 ts1) (repeat t2)) (repeat MatchRight))
+        let s = sureness shape1 <> sureness shape2
+        in blurWith s $ joinTupleComponents (zip (zipWith shapeOverlap (notNullPrefix s1 ts1) (repeat t2)) (repeat MatchRight))
     (Array t1, Tuple s2 ts2) ->
-        joinTupleComponents (zip (zipWith shapeOverlap (repeat t1) (notNullPrefix s2 ts2)) (repeat MatchLeft))
+        let s = sureness shape1 <> sureness shape2
+        in blurWith s $ joinTupleComponents (zip (zipWith shapeOverlap (repeat t1) (notNullPrefix s2 ts2)) (repeat MatchLeft))
     (Array t1, Array t2) ->
         Overlapping Sure (JsonArray []) -- trivial case
     (NamedTuple s1 ps1, NamedTuple s2 ps2) ->
@@ -76,35 +78,37 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
                     in NonOverlapping (ViaObjectHasKey k MatchRight)
                 else joinCommonParts
             (Strict, Tolerant) ->
-                if not (null (filter (not . acceptNull . snd) sndOnly)) then
-                    let k = fst (head (filter (not . acceptNull . snd) sndOnly))
-                    in NonOverlapping (ViaObjectHasKey k MatchRight)
+                let (psMayNull, psNotNull) = partition (acceptNull . snd) sndOnly in
+                if not (null psNotNull) then
+                    let k = fst (head psNotNull) in NonOverlapping (ViaObjectHasKey k MatchRight)
                 else
-                    extendOverlappingEvidenceObj fstOnly joinCommonParts
+                    blurWith (foldMap (sureness . snd) psMayNull) (extendOverlappingEvidenceObj fstOnly joinCommonParts)
             (Tolerant, Strict) ->
-                if not (null (filter (not . acceptNull . snd) fstOnly)) then
-                    let k = fst (head (filter (not . acceptNull . snd) fstOnly))
-                    in NonOverlapping (ViaObjectHasKey k MatchLeft)
+                let (psMayNull, psNotNull) = partition (acceptNull . snd) fstOnly in
+                if not (null psNotNull) then
+                    let k = fst (head psNotNull) in NonOverlapping (ViaObjectHasKey k MatchLeft)
                 else
-                    extendOverlappingEvidenceObj sndOnly joinCommonParts
+                    blurWith (foldMap (sureness . snd) psMayNull) (extendOverlappingEvidenceObj sndOnly joinCommonParts)
             (Tolerant, Tolerant) ->
                 extendOverlappingEvidenceObj (fstOnly ++ sndOnly) joinCommonParts
     (NamedTuple s1 ps1, TextMap t2) ->
-        joinObjectComponents [(k, shapeOverlap t1 t2, MatchRight) | (k, t1) <- ps1, s1 == Strict || not (acceptNull t1)]
+        let s = sureness shape1 <> sureness shape2
+        in blurWith s $ joinObjectComponents [(k, shapeOverlap t1 t2, MatchRight) | (k, t1) <- ps1, s1 == Strict || not (acceptNull t1)]
     (TextMap t1, NamedTuple s2 ps2) ->
-        joinObjectComponents [(k, shapeOverlap t1 t2, MatchLeft) | (k, t2) <- ps2, s2 == Strict || not (acceptNull t2)]
+        let s = sureness shape1 <> sureness shape2
+        in blurWith s $ joinObjectComponents [(k, shapeOverlap t1 t2, MatchLeft) | (k, t2) <- ps2, s2 == Strict || not (acceptNull t2)]
     (TextMap t1, TextMap t2) ->
         Overlapping Sure (JsonObject []) -- trivial case
     (Alternative t1 t2 _, t3) ->
         joinLeftOrPath (shapeOverlap t1 (Fix t3)) (shapeOverlap t2 (Fix t3))
     (t1, Alternative t2 t3 _) ->
         joinRightOrPath (shapeOverlap (Fix t1) t2) (shapeOverlap (Fix t1) t3)
-    (Refined t1 _, t2) -> blurShapeRelation (shapeOverlap t1 (Fix t2)) -- Refined condition is treated as blackbox
-    (t1, Refined t2 _) -> blurShapeRelation (shapeOverlap (Fix t1) t2) -- Refined condition is treated as blackbox
+    (Refined t1 _, t2) -> blur (shapeOverlap t1 (Fix t2)) -- Refined condition is treated as blackbox
+    (t1, Refined t2 _) -> blur (shapeOverlap (Fix t1) t2) -- Refined condition is treated as blackbox
     (Ref _, t) -> Overlapping Unsure (example (Fix t)) -- Ref () is treated as blackbox
     (t, Ref _) -> Overlapping Unsure (example (Fix t)) -- Ref () is treated as blackbox
-    (Anything, t) -> Overlapping (if isDeterminateShape (Fix t) then Sure else Unsure) (example (Fix t))
-    (t, Anything) -> Overlapping (if isDeterminateShape (Fix t) then Sure else Unsure) (example (Fix t))
+    (Anything, t) -> Overlapping (sureness (Fix t)) (example (Fix t))
+    (t, Anything) -> Overlapping (sureness (Fix t)) (example (Fix t))
     _ -> --NOTE: these trivial cases, depending on matchOutline, it's correctness is subtle.
         if matchOutline tr2 (example shape1) then Overlapping Sure (example shape1)
         else if matchOutline tr1 (example shape2) then Overlapping Sure (example shape2)
@@ -120,16 +124,21 @@ instance Monoid Sureness where
     mappend Sure Sure = Sure
     mappend _ _ = Unsure
 
+sureness :: Shape -> Sureness
+sureness sh = if isDeterminateShape sh then Sure else Unsure
+
+-- | change Sure to s when Overlapping
+blurWith :: Sureness -> ShapeRelation -> ShapeRelation
+blurWith s sr = case sr of Overlapping Sure d -> Overlapping s d; _ -> sr
+
 -- | change Sure to Unsure when Overlapping
-blurShapeRelation :: ShapeRelation -> ShapeRelation
-blurShapeRelation sr = case sr of Overlapping Sure d -> Overlapping Unsure d; _ -> sr
+blur :: ShapeRelation -> ShapeRelation
+blur = blurWith Unsure
 
 extendOverlappingEvidenceObj :: [(String, Shape)] -> ShapeRelation -> ShapeRelation
 extendOverlappingEvidenceObj ps sr = case sr of
     Overlapping s d -> let sh' = (Fix $ NamedTuple Strict ps) in Overlapping (s <> sureness sh') (extendObj d (example sh'))
     NonOverlapping c -> NonOverlapping c
-    where
-        sureness sh = if isDeterminateShape sh then Sure else Unsure
 
 notNullPrefix :: Strictness -> [Shape] -> [Shape]
 {-# INLINE notNullPrefix #-}
