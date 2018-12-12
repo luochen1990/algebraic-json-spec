@@ -420,10 +420,10 @@ toJsonSpec (Fix tr) = case tr of
     ConstText s -> JsonText (escape s)
     ConstBoolean b -> JsonBoolean b
     Tuple Strict ts -> JsonArray (map toJsonSpec ts)
-    Tuple Tolerant ts -> JsonArray (tag "Tuple*" : map toJsonSpec ts)
+    Tuple Tolerant ts -> JsonArray (map toJsonSpec ts ++ [tag "Tolerant"])
     Array t -> JsonArray [tag "Array", (toJsonSpec t)]
     NamedTuple Strict ps -> JsonObject [(k, toJsonSpec t) | (k, t) <- ps]
-    NamedTuple Tolerant ps -> JsonArray [tag "NamedTuple*", JsonObject [(k, toJsonSpec t) | (k, t) <- ps]]
+    NamedTuple Tolerant ps -> JsonObject ([(k, toJsonSpec t) | (k, t) <- ps] ++ [("*", tag "Tolerant")])
     TextMap t -> JsonArray [tag "TextMap", (toJsonSpec t)]
     Ref name -> JsonText ('$':name)
     Refined t p -> JsonArray [tag "Refined", (toJsonSpec t)]
@@ -446,16 +446,18 @@ fromJsonSpec d = Fix $ case d of
         _ -> ConstText (unescape s)
     JsonBoolean b -> ConstBoolean b
     JsonArray xs -> case xs of
-        (JsonText "#Tuple" : xs') -> Tuple Strict (map fromJsonSpec xs')
-        (JsonText "#Tuple*" : xs') -> Tuple Tolerant (map fromJsonSpec xs')
-        (JsonText "#NamedTuple" : xs') -> case (head xs') of JsonObject ps -> NamedTuple Strict [(k, fromJsonSpec v) | (k, v) <- ps]
-        (JsonText "#NamedTuple*" : xs') -> case (head xs') of JsonObject ps -> NamedTuple Tolerant [(k, fromJsonSpec v) | (k, v) <- ps]
         (JsonText "#Array" : xs') -> Array (fromJsonSpec (head xs'))
         (JsonText "#TextMap" : xs') -> TextMap (fromJsonSpec (head xs'))
         (JsonText "#Refined" : xs') -> Refined (fromJsonSpec (head xs')) undefined
         (JsonText "#Alternative" : xs') -> Alternative (fromJsonSpec (head xs')) (fromJsonSpec (head (tail xs'))) ()
-        _ -> Tuple Strict (map fromJsonSpec xs)
-    JsonObject ps -> NamedTuple Strict [(k, fromJsonSpec v) | (k, v) <- ps]
+        _ ->
+            let (tol, xs') = partition (== JsonText "#Tolerant") xs
+                s = if (null tol) then Strict else Tolerant
+            in Tuple s (map fromJsonSpec xs')
+    JsonObject ps ->
+        let (tol, ps') = partition ((== JsonText "#Tolerant") . snd) ps
+            s = if (null tol) then Strict else Tolerant
+        in NamedTuple s [(k, fromJsonSpec v) | (k, v) <- ps']
     where
         unescape s = case s of ('\\':s') -> s'; _ -> s
 
