@@ -1,0 +1,32 @@
+Failures:
+
+  test\Spec.hs:90:5:
+  1) AlgebraicJSON arbitraryJ-generated-data-do-matchSpec
+       Falsifiable (after 774 tests and 10 shrinks):
+         {"": Null, "": Number}
+         {"": null, "": 13.121968805733552}
+         UnMatched (StepCause (NamedTupleFieldNotMatch "") (DirectCause OutlineNotMatch Null 13.121968805733552)) /= Matched
+
+  To rerun use: --match "/AlgebraicJSON/arbitraryJ-generated-data-do-matchSpec/"
+
+  test\Spec.hs:113:5:
+  2) AlgebraicJSON serializeJ . deserializeJ == identity
+       uncaught exception: ErrorCall
+       not match
+       CallStack (from HasCallStack):
+         error, called at src\AlgebraicJSON\Core\Serialize.hs:89:18 in algebraic-json-0.1.0.0-2AeZqbgVOEwKu55rY0sQeH:AlgebraicJSON.Core.Serialize
+       (after 28 tests and 4 shrinks)
+         {"": Null, "": (*)}
+         {"": null, "": [False]}
+         Exception thrown while showing test case:
+           not match
+           CallStack (from HasCallStack):
+             error, called at src\AlgebraicJSON\Core\Serialize.hs:89:18 in algebraic-json-0.1.0.0-2AeZqbgVOEwKu55rY0sQeH:AlgebraicJSON.Core.Serialize
+
+
+  To rerun use: --match "/AlgebraicJSON/serializeJ . deserializeJ == identity/"
+
+Randomized with seed 428896263
+
+Finished in 3.2928 seconds
+13 examples, 2 failures

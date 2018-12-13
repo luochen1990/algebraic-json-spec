@@ -25,6 +25,9 @@ dependencies:
 - hspec
 - QuickCheck
 - data-fix
+- bytes
+- cereal
+- bytestring
 
 library:
   source-dirs: src

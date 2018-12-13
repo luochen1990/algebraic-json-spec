@@ -13,6 +13,9 @@ import Data.List
 import Data.Fix
 import Data.Maybe (mapMaybe)
 import Control.Exception
+import Data.Bytes.Serial
+import Data.Bytes.Get
+import Data.Bytes.Put
 import Test.Hspec hiding (Spec, example)
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
@@ -20,6 +23,7 @@ import AlgebraicJSON.Core.Tools
 import AlgebraicJSON.Core.Definitions
 import AlgebraicJSON.Core.Functions
 import AlgebraicJSON.Core.Generators
+import AlgebraicJSON.Core.Serialize
 import AlgebraicJSON.EDSL
 
 isRight :: Either a b -> Bool
@@ -104,6 +108,16 @@ main = hspec $ do
       \(sp :: Spec) ->
         toShape M.empty (fromJsonSpec (toJsonSpec sp)) === toShape M.empty sp
 
+    prop "deserialize . serialize == identity (for JsonData)" $
+      \(d :: JsonData) ->
+        either error id (runGetS deserialize (runPutS (serialize d))) === d
+
+    prop "deserializeJ . serializeJ == identity" $
+      \(sp :: CSpec) ->
+        isDeterminateShape (toShape M.empty sp) ==>
+          forAll (arbitraryJ sp) $ \d ->
+            deserializeJ M.empty sp (serializeJ M.empty sp d) === d
+
     it "works with some simple cases" $ do
       show (checkSpec env (number <|||> text)) `shouldBe` "Right (Number | Text)"
       show (checkSpec env ((number <|||> text) <|||> (ctext "abc"))) `shouldBe` "Left (ExistOverlappingOr Sure (Number | Text) \"abc\" \"abc\")"
@@ -126,12 +140,15 @@ main = hspec $ do
 
 -- test data
 
+env = M.fromList [("AST", ast)]
 ast = case1 <|||> case2
 case1 = tuple [ctext "Lit", number]
 case1' = (tuple [ctext "Lit", cnumber 1])
 case2 = (tuple [ctext "Add", ref "AST", ref "AST"])
 
-env = M.fromList [("AST", ast)]
+env' = either undefined id (checkEnv env)
+ast' = either undefined id (checkSpec env ast)
+
 dat1 = JsonArray [JsonText "Lit", JsonNumber 1]
 dat2 = JsonArray [JsonText "Lit", JsonText "1"]
 
