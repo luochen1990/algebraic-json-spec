@@ -31,6 +31,9 @@ arbSet n k = vectorOf n k >>= pure . nub
 arbMap :: Eq a => Int -> Gen a -> Gen b -> Gen [(a, b)]
 arbMap n k v = [zip ks vs | ks <- arbSet n k, vs <- vectorOf (length ks) v]
 
+shrinkSnd :: Arbitrary b => (a, b) -> [(a, b)]
+shrinkSnd (x, y) = [(x, y') | y' <- shrink y]
+
 instance Arbitrary JsonData where
   arbitrary = sized tree' where
     tree' 0 = oneof [
@@ -44,7 +47,7 @@ instance Arbitrary JsonData where
       JsonObject <$> (arbNat >>= \m -> arbMap m arbKey (tree' ((n-1) `div` m)))]
   shrink d = case d of
     JsonArray xs -> xs ++ [JsonArray xs' | xs' <- shrink xs]
-    JsonObject ps -> map snd ps ++ [JsonObject ps' | ps' <- shrink ps]
+    JsonObject ps -> map snd ps ++ [JsonObject ps' | ps' <- shrinkList shrinkSnd ps]
     JsonNumber x -> JsonNull : [JsonNumber 1 | x /= 1]
     JsonText s -> JsonNull : [JsonText "a" | s /= "a"]
     JsonNull -> []
@@ -81,7 +84,7 @@ instance Arbitrary Spec where
   shrink (Fix tr) = case tr of
     Tuple s ts -> Fix Null : ts ++ [Fix $ Tuple s ts' | ts' <- shrinkList shrink ts] ++ [Fix $ Tuple Strict ts | s == Tolerant]
     Array t -> Fix Null : t : [Fix $ Array t' | t' <- shrink t]
-    NamedTuple s ps -> Fix Null : map snd ps ++ [Fix $ NamedTuple s ps' | ps' <- shrinkList shrink ps] ++ [Fix $ NamedTuple Strict ps | s == Tolerant]
+    NamedTuple s ps -> Fix Null : map snd ps ++ [Fix $ NamedTuple s ps' | ps' <- shrinkList shrinkSnd ps] ++ [Fix $ NamedTuple Strict ps | s == Tolerant]
     TextMap t -> Fix Null : t : [Fix $ TextMap t' | t' <- shrink t]
     Refined t p -> Fix Null : t : [Fix $ Refined t' p | t' <- shrink t]
     Alternative t1 t2 _ -> Fix Null : [t1, t2] ++ [Fix $ Alternative t1' t2' () | (t1', t2') <- shrink (t1, t2)]
