@@ -6,6 +6,7 @@
 {-# language TypeSynonymInstances #-}
 {-# language FlexibleInstances #-}
 
+--import Debug.Trace
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.List
@@ -121,6 +122,7 @@ main = hspec $ do
       show (tryMatchSpec env spec4 data4) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (NamedTupleFieldNotMatch \"y\") (StepCause (NamedTupleFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\")))))"
       show (tryMatchSpec M.empty (tuple' [number, cnull]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
       show (tryMatchSpec M.empty (tuple' [number, cnull] <|||> tuple [cnumber 1, cnumber 1]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
+      show (checkSpec M.empty (tuple' [refined cnull (const False)] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure (Refined<Null>, *) () [])"
 
 -- test data
 

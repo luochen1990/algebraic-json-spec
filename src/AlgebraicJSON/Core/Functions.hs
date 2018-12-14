@@ -40,7 +40,7 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
     (Tuple s1 ts1, Tuple s2 ts2) ->
         let (l1, l2, l1', l2') = (length ts1, length ts2, length (notNullPrefix s1 ts1), length (notNullPrefix s2 ts2))
             joinCommonParts = joinTupleComponents $ do
-                (i, (t1, t2)) <- zip [0..(max l1 l2)] $ zip (pad s1 ts1) (pad s2 ts2)
+                (i, (t1, t2)) <- zip [0..(max l1 l2 - 1)] $ zip (pad s1 ts1) (pad s2 ts2)
                 let onIndexOutOfRange = (if s1 == Tolerant && acceptNull t1 && i >= l1' then MatchLeft else if s2 == Tolerant && acceptNull t2 && i >= l2' then MatchRight else MatchNothing)
                 pure (shapeOverlap t1 t2, onIndexOutOfRange)
         in case (s1, s2) of
@@ -49,10 +49,10 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
                 else joinCommonParts
             (Strict, Tolerant) ->
                 if l1 < l2' then NonOverlapping (ViaArrayLengthGT l1 MatchRight)
-                else joinCommonParts
+                else blurWith (foldMap sureness (drop l1 ts2)) joinCommonParts
             (Tolerant, Strict) ->
                 if l1' > l2 then NonOverlapping (ViaArrayLengthGT l2 MatchLeft)
-                else joinCommonParts
+                else blurWith (foldMap sureness (drop l2 ts1)) joinCommonParts
             (Tolerant, Tolerant) ->
                 joinCommonParts
     (Tuple s1 ts1, Array t2) ->
