@@ -1,3 +1,5 @@
 .stack-work/
 algebraic-json.cabal
+*.bak
+*.log
 *~
