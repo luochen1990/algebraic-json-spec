@@ -151,10 +151,10 @@ pad s ts = if s == Strict then ts else ts ++ repeat (Fix Anything)
 
 joinTupleComponents :: [(ShapeRelation, MatchChoice)] -> ShapeRelation
 joinTupleComponents [] = Overlapping Sure (JsonArray [])
-joinTupleComponents ((r, onIndexOutOfRange):rs) = case (r, joinTupleComponents rs) of
+joinTupleComponents ((r, oor):rs) = case (r, joinTupleComponents rs) of
     (Overlapping s1 d1, Overlapping s2 (JsonArray ds)) -> Overlapping (s1 <> s2) (JsonArray (d1:ds))
-    (NonOverlapping c, _) -> NonOverlapping (ViaArrayElement 0 onIndexOutOfRange c)
-    (_, NonOverlapping (ViaArrayElement i mc c')) -> NonOverlapping (ViaArrayElement (i+1) onIndexOutOfRange c')
+    (NonOverlapping c, _) -> NonOverlapping (ViaArrayElement 0 oor c)
+    (_, NonOverlapping (ViaArrayElement i oor' c')) -> NonOverlapping (ViaArrayElement (i+1) oor' c')
 
 joinObjectComponents :: [(String, ShapeRelation, MatchChoice)] -> ShapeRelation
 joinObjectComponents [] = Overlapping Sure (JsonObject [])
@@ -229,7 +229,7 @@ matchSpec env spec@(Fix t) d = let rec = matchSpec env in case (t, d) of
     (t@(Alternative t1 t2 c), d) -> case makeChoice c d of
         MatchLeft -> wrap OrNotMatchLeft (rec t1 d)
         MatchRight -> wrap OrNotMatchRight (rec t2 d)
-        MatchNothing -> UnMatched (DirectCause OrMatchNothing spec d)
+        MatchNothing -> UnMatched (DirectCause (OrMatchNothing c) spec d)
     (Ref name, d) -> wrap (RefNotMatch name) (rec (env M.! name) d) -- NOTICE: can fail if name not in env
     (t, d) -> if matchOutline t d then Matched else UnMatched (DirectCause OutlineNotMatch spec d)
 

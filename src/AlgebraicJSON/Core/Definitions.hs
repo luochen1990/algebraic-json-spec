@@ -502,8 +502,8 @@ data DirectUMR =
     | TupleLengthNotEqual
     | NamedTupleKeySetNotEqual
     | RefinedPropNotMatch --TODO: add prop description sentence
-    | OrMatchNothing
-    deriving (Show, Eq, Ord)
+    | OrMatchNothing ChoiceMaker
+    deriving (Show, Eq)
 
 -- | step unmatch reason, a part of UnMatchedReason
 data StepUMR =
