@@ -25,10 +25,10 @@ arbNat = elements [0, 1, 2]
 arbNatSized :: Int -> Gen Int
 arbNatSized n = resize n arbitrarySizedNatural
 
-arbSet :: Eq a => Int -> Gen a -> Gen [a]
-arbSet n k = vectorOf n k >>= pure . nub
+arbSet :: Ord a => Int -> Gen a -> Gen [a]
+arbSet n k = vectorOf n k >>= pure . nub . sort
 
-arbMap :: Eq a => Int -> Gen a -> Gen b -> Gen [(a, b)]
+arbMap :: Ord a => Int -> Gen a -> Gen b -> Gen [(a, b)]
 arbMap n k v = [zip ks vs | ks <- arbSet n k, vs <- vectorOf (length ks) v]
 
 shrinkSnd :: Arbitrary b => (a, b) -> [(a, b)]
@@ -102,30 +102,33 @@ arbitraryJ :: CSpec -> Gen JsonData
 --arbitraryJ t = arbitrary `suchThat` (matchSpec' M.empty t)
 arbitraryJ spec@(Fix tr) = sized (tree' tr) where
   tree' :: TyRep Name DecProp ChoiceMaker CSpec -> Int -> Gen JsonData
-  tree' tr = \n -> case tr of
+  tree' tr = \n -> if n < 0 then error ("arbitraryJ: negative size " ++ show n) else case tr of
     Anything -> resize n arbitrary
     Number -> JsonNumber <$> arbitrary
-    Text -> JsonText <$> arbitrary
+    Text -> JsonText <$> resize n arbitrary
     Boolean -> JsonBoolean <$> arbitrary
     Null -> pure $ JsonNull
     ConstNumber m -> pure $ JsonNumber m
     ConstText s -> pure $ JsonText s
     ConstBoolean b -> pure $ JsonBoolean b
-    Tuple Strict ts -> JsonArray <$> sequence (map (\(Fix t) -> tree' t ((n-1) `div` (length ts))) ts)
+    Tuple Strict ts -> let m = length ts in JsonArray <$> sequence (map (\(Fix t) -> tree' t (max 0 (n-m-1) `div` m)) ts)
     Tuple Tolerant ts ->
       let ts' = (reverse . dropWhile (acceptNull . toShape M.empty) . reverse) ts; (l, l') = (length ts, length ts')
-      in arbNatSized (l - l' + 1) >>= \n ->
-        let ts'' = take (l' + n) (ts ++ repeat (Fix Anything)) in arbitraryJ (Fix $ Tuple Strict ts'')
-    Array (Fix t) -> arbNat >>= \m -> JsonArray <$> vectorOf m (tree' t ((n-1) `div` m))
-    NamedTuple Strict ps -> JsonObject <$> sequence [(k,) <$> tree' t ((n-1) `div` length ps) | (k, (Fix t)) <- ps]
-    NamedTuple Tolerant ps -> sequence [arbNatSized 1, arbNatSized 1, arbNatSized 3] >>= \[n1, n2, sz1] ->
-      arbMap n1 arbKey' (resize sz1 arbitrary) >>= \ps1_ ->
+      in arbNatSized (l - l' + 1) >>= \m ->
+        let ts'' = take (l' + m) (ts ++ repeat (Fix Anything)) in tree' (Tuple Strict ts'') (max 0 (n-1))
+    Array (Fix t) -> arbNatSized (min 3 n) >>= \m -> JsonArray <$> vectorOf m (tree' t (max 0 (n-m-1) `div` m))
+    NamedTuple Strict ps -> let m = length ps in JsonObject <$> sequence [(k,) <$> tree' t (max 0 (n-m-1) `div` m) | (k, (Fix t)) <- ps]
+    NamedTuple Tolerant ps -> sequence [arbNatSized (min 1 n), arbNatSized 1] >>= \[n1, n2] ->
+      arbMap n1 arbKey' (pure $ Fix Anything) >>= \ps1_ ->
         let (ps2, ps1) = partition (acceptNull . toShape M.empty . snd) ps
             ps1' = ps1 ++ ps1_
             ps2' = drop n2 ps2
-        in arbitraryJ (Fix $ NamedTuple Strict (ps1' ++ ps2'))
-    TextMap (Fix t) -> arbNat >>= \m -> JsonObject <$> arbMap m arbKey (tree' t ((n-1) `div` m))
-    Refined (Fix t) p -> tree' t (n-1) `suchThat` testProp p
+        in tree' (NamedTuple Strict (ps1' ++ ps2')) (max 0 (n-1-n1))
+    TextMap (Fix t) -> arbNatSized (min 3 n) >>= \m -> JsonObject <$> arbMap m arbKey (tree' t (max 0 (n-m-1) `div` m))
+    Refined (Fix t) p -> tree' t (max 0 (n-1)) `suchThat` testProp p
     Ref name -> error "arbitraryJ should not be used on Ref"
     Alternative (Fix a) (Fix b) _ -> oneof [tree' a n, tree' b n]
+
+sampleJ :: Spec -> IO ()
+sampleJ sp = sample (arbitraryJ (either undefined id (checkSpec M.empty sp)))
 
