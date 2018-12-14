@@ -4,7 +4,7 @@
 module AlgebraicJSON.EDSL where
 
 import Data.Fix
-import AlgebraicJSON.Core.Definitions (TyRep(..), Strictness(..), DecProp(..), Spec, Name)
+import AlgebraicJSON.Core.Definitions (TyRep(..), Strictness(..), DecProp(..), JsonData(..), Spec, Name)
 
 tuple, tuple' :: [Spec] -> Spec
 tuple ts = Fix (Tuple Strict ts)
@@ -35,6 +35,9 @@ ctext s = Fix (ConstText s)
 
 ref :: Name -> Spec
 ref s = Fix (Ref s)
+
+refined :: Spec -> (JsonData -> Bool) -> Spec
+refined sp prop = Fix (Refined sp (DecProp prop))
 
 -- | infix constructor of an Alternative node
 (<|||>) :: Spec -> Spec -> Spec
