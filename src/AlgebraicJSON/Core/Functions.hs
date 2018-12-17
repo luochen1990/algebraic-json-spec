@@ -104,8 +104,8 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
         joinLeftOrPath (shapeOverlap t1 (Fix t3)) (shapeOverlap t2 (Fix t3))
     (t1, Alternative t2 t3 _) ->
         joinRightOrPath (shapeOverlap (Fix t1) t2) (shapeOverlap (Fix t1) t3)
-    (Refined t1 _, t2) -> blur (shapeOverlap t1 (Fix t2)) -- Refined condition is treated as blackbox
-    (t1, Refined t2 _) -> blur (shapeOverlap (Fix t1) t2) -- Refined condition is treated as blackbox
+    (Refined t1 _, t2) -> blurWith Unsure (shapeOverlap t1 (Fix t2)) -- Refined condition is treated as blackbox
+    (t1, Refined t2 _) -> blurWith Unsure (shapeOverlap (Fix t1) t2) -- Refined condition is treated as blackbox
     (Ref _, t) -> Overlapping Unsure (example (Fix t)) -- Ref () is treated as blackbox
     (t, Ref _) -> Overlapping Unsure (example (Fix t)) -- Ref () is treated as blackbox
     (Anything, t) -> Overlapping (sureness (Fix t)) (example (Fix t))
@@ -128,13 +128,9 @@ instance Monoid Sureness where
 sureness :: Shape -> Sureness
 sureness sh = if isDeterminateShape sh then Sure else Unsure
 
--- | change Sure to s when Overlapping
+-- | blur the ShapeRelation with Sureness s, replace Sure to s when Overlapping
 blurWith :: Sureness -> ShapeRelation -> ShapeRelation
 blurWith s sr = case sr of Overlapping Sure d -> Overlapping s d; _ -> sr
-
--- | change Sure to Unsure when Overlapping
-blur :: ShapeRelation -> ShapeRelation
-blur = blurWith Unsure
 
 extendOverlappingEvidenceObj :: [(String, Shape)] -> ShapeRelation -> ShapeRelation
 extendOverlappingEvidenceObj ps sr = case sr of
