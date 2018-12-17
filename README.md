@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/luochen1990/algebraic-json.svg?branch=master)](https://travis-ci.org/luochen1990/algebraic-json)
+
 Algebraic JSON
 ==============
 
@@ -11,4 +13,5 @@ Features
 - Runtime data format checking.
 - Random sample generation.
 - Generic programming tools.
+- Efficient binary serialization & deserialization.
 
