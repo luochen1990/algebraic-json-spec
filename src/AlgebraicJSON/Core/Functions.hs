@@ -193,7 +193,7 @@ checkSpec env = cataM f where
     f tr = Right (Fix (quadmap3 undefined tr))
 
 checkAlternative :: forall p c. Env (Fix (TyRep Name p c)) -> CSpec -> CSpec -> Either CheckFailedReason CSpec
-checkAlternative env a b = case shapeOverlap (toShape env a) (toShape env b) of
+checkAlternative env a b = case shapeOverlap (toShape 1 env a) (toShape 1 env b) of
     (NonOverlapping c) -> Right (Fix $ Alternative a b c)
     (Overlapping s d) -> Left (ExistOverlappingOr s a b d)
 

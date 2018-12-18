@@ -113,14 +113,14 @@ arbitraryJ spec@(Fix tr) = sized (tree' tr) where
     ConstBoolean b -> pure $ JsonBoolean b
     Tuple Strict ts -> let m = length ts in JsonArray <$> sequence (map (\(Fix t) -> tree' t (max 0 (n-m-1) `div` m)) ts)
     Tuple Tolerant ts ->
-      let ts' = (reverse . dropWhile (acceptNull . toShape M.empty) . reverse) ts; (l, l') = (length ts, length ts')
+      let ts' = (reverse . dropWhile (acceptNull . toShape') . reverse) ts; (l, l') = (length ts, length ts')
       in arbNatSized (l - l' + 1) >>= \m ->
         let ts'' = take (l' + m) (ts ++ repeat (Fix Anything)) in tree' (Tuple Strict ts'') (max 0 (n-1))
     Array (Fix t) -> arbNatSized (min 3 n) >>= \m -> JsonArray <$> vectorOf m (tree' t (max 0 (n-m-1) `div` m))
     NamedTuple Strict ps -> let m = length ps in JsonObject <$> sequence [(k,) <$> tree' t (max 0 (n-m-1) `div` m) | (k, (Fix t)) <- ps]
     NamedTuple Tolerant ps -> sequence [arbNatSized (min 1 n), arbNatSized 1] >>= \[n1, n2] ->
       arbMap n1 arbKey' (pure $ Fix Anything) >>= \ps1_ ->
-        let (ps2, ps1) = partition (acceptNull . toShape M.empty . snd) ps
+        let (ps2, ps1) = partition (acceptNull . toShape' . snd) ps
             ps1' = ps1 ++ ps1_
             ps2' = drop n2 ps2
         in tree' (NamedTuple Strict (ps1' ++ ps2')) (max 0 (n-1-n1))

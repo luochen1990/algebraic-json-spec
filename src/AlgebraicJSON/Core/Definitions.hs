@@ -348,23 +348,26 @@ instance ShowAlternative ChoiceMaker where
 toSpec :: CSpec -> Spec
 toSpec (Fix tr) = Fix $ quadmap id id (const ()) toSpec tr
 
-toShape :: Env (Fix (TyRep Name p c)) -> (Fix (TyRep Name p' c')) -> Shape
-toShape env sp = evalState (cataM g sp) S.empty where
-    g :: TyRep Name p'' c'' Shape -> State (S.Set Name) Shape
+toShape :: Int -> Env (Fix (TyRep Name p c)) -> (Fix (TyRep Name p' c')) -> Shape
+toShape dep env sp | dep >= 0 = evalState (cataM g sp) M.empty where
+    g :: TyRep Name p'' c'' Shape -> State (M.Map Name Int) Shape
     g tr = case tr of
         Ref name -> do
             --traceM ("name: " ++ name)
             visd <- get
-            if name `S.member` visd
+            if dep == 0 || fromMaybe 0 (visd M.!? name) >= dep
             then pure (Fix (Ref ()))
             else do
-                modify (S.insert name)
-                r <- cataM g (env M.! name)
-                modify (S.delete name)
+                modify (M.alter (Just . (+1) . fromMaybe 0) name)
+                r <- cataM g (env M.! name) --NOTE: may fail
+                modify (M.alter (Just . (+(-1)) . fromJust) name)
                 return r
         Refined t _ -> pure (Fix (Refined t ()))
         Alternative t1 t2 _ -> pure (Fix $ Alternative t1 t2 ())
         t -> pure (Fix $ quadmap (const ()) (const ()) (const ()) id t)
+
+toShape' :: (Fix (TyRep Name p c)) -> Shape
+toShape' = toShape 0 M.empty
 
 -- | decide whether a shape contains no blackbox item
 isDeterminateShape :: Shape -> Bool

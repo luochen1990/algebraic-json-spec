@@ -51,7 +51,7 @@ main = hspec $ do
   describe "AlgebraicJSON" $ do
     prop "example-matchSpec" $
       \(sp :: CSpec) ->
-        let sh = toShape M.empty sp
+        let sh = toShape' sp
         in isDeterminateShape sh ==> matchSpec M.empty sp (example sh) === Matched
 
     prop "matchSpec-Or-commutative" $
@@ -90,23 +90,23 @@ main = hspec $ do
 
     prop "arbitraryJ-generated-data-do-matchSpec" $
       \(sp :: CSpec) ->
-        isDeterminateShape (toShape M.empty sp) ==>
+        isDeterminateShape (toShape' sp) ==>
           forAll (arbitraryJ sp) $ \d ->
             matchSpec' sp d === Matched
 
     prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
       \(sp1 :: CSpec) ->
-        let sh1 = toShape M.empty sp1 in acceptNull sh1 && isDeterminateShape sh1 ==>
+        let sh1 = toShape' sp1 in acceptNull sh1 && isDeterminateShape sh1 ==>
           forAll arbNat $ \n ->
             forAll (vectorOf n arbitrary) $ \sps ->
               let sp = (Fix $ Tuple Strict sps)
-              in isDeterminateShape (toShape M.empty sp) ==>
+              in isDeterminateShape (toShape' sp) ==>
                 forAll (arbitraryJ sp) $ \d ->
                   let sp' = (Fix $ Tuple Tolerant (sps ++ [sp1])) in matchSpec' sp' d === Matched <?> show sp'
 
     prop "fromJsonSpec . toJsonSpec == identity" $
       \(sp :: Spec) ->
-        toShape M.empty (fromJsonSpec (toJsonSpec sp)) === toShape M.empty sp
+        toShape' (fromJsonSpec (toJsonSpec sp)) === toShape' sp
 
     prop "deserialize . serialize == identity (for JsonData)" $
       \(d :: JsonData) ->
@@ -114,7 +114,7 @@ main = hspec $ do
 
     prop "deserializeJ . serializeJ == identity" $
       \(sp :: CSpec) ->
-        isDeterminateShape (toShape M.empty sp) ==>
+        isDeterminateShape (toShape' sp) ==>
           forAll (arbitraryJ sp) $ \d ->
             deserializeJ M.empty sp (serializeJ M.empty sp d) === d
 
@@ -126,7 +126,7 @@ main = hspec $ do
       show (checkSpec env ((number <|||> text) <|||> ast)) `shouldBe` "Right ((Number | Text) | ((\"Lit\", Number) | (\"Add\", AST, AST)))"
       show (checkSpec env ((number <|||> text) <|||> case1')) `shouldBe` "Right ((Number | Text) | (\"Lit\", 1.0))"
       show (checkSpec env ((number <|||> text) <|||> (case1 <|||> case1'))) `shouldBe` "Left (ExistOverlappingOr Sure (\"Lit\", Number) (\"Lit\", 1.0) [\"Lit\", 1.0])"
-      show (toShape env ast) `shouldBe` "((\"Lit\", Number) |? (\"Add\", ((\"Lit\", Number) |? (\"Add\", $, $)), ((\"Lit\", Number) |? (\"Add\", $, $))))"
+      show (toShape 1 env ast) `shouldBe` "((\"Lit\", Number) |? (\"Add\", ((\"Lit\", Number) |? (\"Add\", $, $)), ((\"Lit\", Number) |? (\"Add\", $, $))))"
       show (checkSpec env (spec1 <|||> spec2)) `shouldBe` "Right ({x: Number, y: Number, *} | {z: Number, x: Text, *})"
       show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
       show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
