@@ -11,7 +11,6 @@ module JsonSpec.Core.Functions (
 ) where
 
 --import Debug.Trace
-import Prelude hiding (otherwise)
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Semigroup
@@ -211,23 +210,23 @@ wrapL f e = case e of Left x -> Left (f x); Right y -> Right y
 matchSpec :: Env CSpec -> CSpec -> JsonData -> MatchResult
 matchSpec env spec@(Fix t) d = let rec = matchSpec env in case (t, d) of
     (Tuple Strict ts, d@(JsonArray xs)) ->
-        (let l1 = length ts; l2 = length xs in (l1 == l2) `otherwise` (DirectCause TupleLengthNotEqual spec d)) <>
-        fold [wrap (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts xs]
+        (let l1 = length ts; l2 = length xs in (l1 == l2) `elseReport` (DirectCause TupleLengthNotEqual spec d)) <>
+        fold [wrapMR (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts xs]
     (Tuple Tolerant ts, d@(JsonArray xs)) ->
-        fold [wrap (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts (xs ++ repeat JsonNull)]
-    (Array t, (JsonArray xs)) -> fold [wrap (ArrayElementNotMatch i) (rec t x) | (i, x) <- zip [0..] xs]
+        fold [wrapMR (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts (xs ++ repeat JsonNull)]
+    (Array t, (JsonArray xs)) -> fold [wrapMR (ArrayElementNotMatch i) (rec t x) | (i, x) <- zip [0..] xs]
     (Object Strict ps, d@(JsonObject kvs)) ->
-        (setEq (map fst ps) (map fst kvs) `otherwise` (DirectCause ObjectKeySetNotEqual spec d)) <>
-        fold [wrap (ObjectFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
+        (setEq (map fst ps) (map fst kvs) `elseReport` (DirectCause ObjectKeySetNotEqual spec d)) <>
+        fold [wrapMR (ObjectFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
     (Object Tolerant ps, d@(JsonObject kvs)) ->
-        fold [wrap (ObjectFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
-    (TextMap t, (JsonObject kvs)) -> fold [wrap (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
-    (t@(Refined t1 p), d) -> wrap RefinedShapeNotMatch (rec t1 d) <> (testProp p d `otherwise` (DirectCause RefinedPropNotMatch spec d))
+        fold [wrapMR (ObjectFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
+    (TextMap t, (JsonObject kvs)) -> fold [wrapMR (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
+    (t@(Refined t1 p), d) -> wrapMR RefinedShapeNotMatch (rec t1 d) <> (testProp p d `elseReport` (DirectCause RefinedPropNotMatch spec d))
     (t@(Or t1 t2 c), d) -> case makeChoice c d of
-        MatchLeft -> wrap OrNotMatchLeft (rec t1 d)
-        MatchRight -> wrap OrNotMatchRight (rec t2 d)
+        MatchLeft -> wrapMR OrNotMatchLeft (rec t1 d)
+        MatchRight -> wrapMR OrNotMatchRight (rec t2 d)
         MatchNothing -> UnMatched (DirectCause (OrMatchNothing c) spec d)
-    (Ref name, d) -> wrap (RefNotMatch name) (rec (env M.! name) d) -- NOTICE: can fail if name not in env
+    (Ref name, d) -> wrapMR (RefNotMatch name) (rec (env M.! name) d) -- NOTICE: can fail if name not in env
     (t, d) -> if matchOutline t d then Matched else UnMatched (DirectCause OutlineNotMatch spec d)
 
 -- | match Spec and JsonData

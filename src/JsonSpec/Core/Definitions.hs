@@ -5,7 +5,6 @@
 
 module JsonSpec.Core.Definitions where
 
-import Prelude hiding (otherwise)
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Semigroup
@@ -472,12 +471,12 @@ fromJsonSpec d = Fix $ case d of
 data MatchResult = Matched | UnMatched UnMatchedReason deriving (Show)
 
 -- | a convenient infix constructor of MatchResult
-otherwise :: Bool -> UnMatchedReason -> MatchResult
-b `otherwise` reason = if b then Matched else UnMatched reason
+elseReport :: Bool -> UnMatchedReason -> MatchResult
+b `elseReport` reason = if b then Matched else UnMatched reason
 
 -- | a convenient prefix constructor of MatchResult
-wrap :: StepUMR -> MatchResult -> MatchResult
-wrap step rst = case rst of Matched -> Matched; UnMatched reason -> UnMatched (StepCause step reason)
+wrapMR :: StepUMR -> MatchResult -> MatchResult
+wrapMR step rst = case rst of Matched -> Matched; UnMatched reason -> UnMatched (StepCause step reason)
 
 -- | Eq instance of MatchResult only compare the tag of the result
 instance Eq MatchResult where
