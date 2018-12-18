@@ -1,6 +1,6 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Apache License 2.0
 
-module AlgebraicJSON.Core.Serialize (serializeJ, deserializeJ, serialList, deserialList) where
+module JsonSpec.Core.Serialize (serializeJ, deserializeJ, serialList, deserialList) where
 
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -12,7 +12,7 @@ import Data.Fix
 import Data.Char (isAlphaNum)
 import Text.MultilingualShow
 import Control.Monad.State
-import AlgebraicJSON.Core.Definitions
+import JsonSpec.Core.Definitions
 import GHC.Exts (sortWith)
 
 import Data.Bytes.Serial
@@ -72,17 +72,17 @@ serializeJ env spec d = runPutS (seri spec d)
             (Tuple Strict ts, (JsonArray xs)) -> if length ts == length xs then sequence_ (zipWith seri ts xs) else error "not match"
             (Tuple Tolerant ts, (JsonArray xs)) -> serialList xs --TODO: optmize
             (Array t, (JsonArray xs)) -> serialize (VarInt (length xs)) >> sequence_ (map (seri t) xs)
-            (NamedTuple Strict ps, (JsonObject kvs)) ->
+            (Object Strict ps, (JsonObject kvs)) ->
                 if length ps == length kvs then
                     let ps' = sortWith fst ps
                         mp = M.fromList kvs
                     in sequence_ [seri t (mp M.! k) | (k, t) <- ps']
                 else error "not match"
-            (NamedTuple Tolerant ps, (JsonObject kvs)) -> serialList kvs --TODO: optmize
+            (Object Tolerant ps, (JsonObject kvs)) -> serialList kvs --TODO: optmize
             (TextMap t, (JsonObject kvs)) -> serialize (VarInt (length kvs)) >> sequence_ [serialize k >> seri t v | (k, v) <- kvs]
             (Refined t _, _) -> seri t d
             (Ref r, _) -> seri (env M.! r) d
-            (Alternative a b c, _) -> case makeChoice c d of
+            (Or a b c, _) -> case makeChoice c d of
                 MatchLeft -> putWord8 0 >> seri a d
                 MatchRight -> putWord8 1 >> seri b d
                 MatchNothing -> error "not match"
@@ -108,17 +108,17 @@ deserializeJ env spec bs = case runGetS (deseri spec) bs of
                 (VarInt n) <- deserialize
                 xs <- replicateM n (deseri t)
                 return $ JsonArray xs
-            NamedTuple Strict ps ->
+            Object Strict ps ->
                 let ps' = sortWith fst ps
                 in JsonObject <$> sequence [liftM2 (,) (pure k) (deseri t) | (k, t) <- ps']
-            NamedTuple Tolerant ps -> JsonObject <$> deserialList --TODO: optmize
+            Object Tolerant ps -> JsonObject <$> deserialList --TODO: optmize
             TextMap t -> do
                 (VarInt n) <- deserialize
                 kvs <- replicateM n (liftM2 (,) deserialize (deseri t))
                 return $ JsonObject kvs
             Ref r -> deseri (env M.! r)
             Refined t _ -> deseri t
-            Alternative a b _ -> do
+            Or a b _ -> do
                 bit <- deserialize
                 if bit then deseri b else deseri a
 

@@ -3,7 +3,7 @@
 {-# language TupleSections #-}
 {-# language FlexibleInstances #-}
 
-module AlgebraicJSON.Core.Definitions where
+module JsonSpec.Core.Definitions where
 
 import Prelude hiding (otherwise)
 import qualified Data.Map as M
@@ -16,7 +16,7 @@ import Data.Fix
 import Data.Char (isAlphaNum)
 import Text.MultilingualShow
 import Control.Monad.State
-import AlgebraicJSON.Core.Tools
+import JsonSpec.Core.Tools
 
 ---------------------------------------------------------------------
 --------------------------- JsonData --------------------------------
@@ -59,7 +59,7 @@ lookupObj' _ _ = error "lookupObj' must be used on JsonObject"
 ---------------------------------------------------------------------
 
 -- | TyRep r p c tr' is a generic representation of Spec & CSpec & Shape,
--- | with Ref indexed by r, Refined with p, Alternative attached with c,
+-- | with Ref indexed by r, Refined with p, Or attached with c,
 -- | and recursively defined on tr'.
 data TyRep r p c tr' =
       Anything
@@ -72,11 +72,11 @@ data TyRep r p c tr' =
     | ConstBoolean Bool
     | Tuple Strictness [tr']
     | Array tr'
-    | NamedTuple Strictness [(String, tr')]
+    | Object Strictness [(String, tr')]
     | TextMap tr'
     | Ref r
     | Refined tr' p
-    | Alternative tr' tr' c
+    | Or tr' tr' c
 
 -- | a tool function to filter out prim TyRep nodes,
 -- | we can use it to simplify pattern matching logic.
@@ -106,11 +106,11 @@ instance (Eq r, Eq p, Eq c, Eq tr') => Eq (TyRep r p c tr') where
         (ConstBoolean b1, ConstBoolean b2) -> b1 == b2
         (Tuple s1 ts1, Tuple s2 ts2) -> s1 == s2 && ts1 == ts2
         (Array t1, Array t2) -> t1 == t2
-        (NamedTuple s1 ps1, NamedTuple s2 ps2) -> s1 == s2 && ps1 == ps2
+        (Object s1 ps1, Object s2 ps2) -> s1 == s2 && ps1 == ps2
         (TextMap t1, TextMap t2) -> t1 == t2
         (Ref r1, Ref r2) -> r1 == r2
         (Refined t1 p1, Refined t2 p2) -> t1 == t2 && p1 == p2
-        (Alternative a1 b1 c1, Alternative a2 b2 c2) -> a1 == a2 && b1 == b2 && c1 == c2
+        (Or a1 b1 c1, Or a2 b2 c2) -> a1 == a2 && b1 == b2 && c1 == c2
         _ -> False
 
 class QuadFunctor f where
@@ -137,11 +137,11 @@ instance QuadFunctor TyRep where
         ConstBoolean b -> ConstBoolean b
         Tuple s ts -> Tuple s (map f4 ts)
         Array t -> Array (f4 t)
-        NamedTuple s ps -> NamedTuple s [(k, f4 v) | (k, v) <- ps]
+        Object s ps -> Object s [(k, f4 v) | (k, v) <- ps]
         TextMap t -> TextMap (f4 t)
         Ref name -> Ref (f1 name)
         Refined t p -> Refined (f4 t) (f2 p)
-        Alternative t1 t2 c -> Alternative (f4 t1) (f4 t2) (f3 c)
+        Or t1 t2 c -> Or (f4 t1) (f4 t2) (f3 c)
 
 instance Functor (TyRep r p c) where
     fmap = quadmap4
@@ -150,10 +150,10 @@ instance Foldable (TyRep r p c) where
     foldMap f tr = case tr of
         Tuple s ts -> foldMap f ts
         Array t -> f t
-        NamedTuple s ps -> foldMap (f . snd) ps
+        Object s ps -> foldMap (f . snd) ps
         TextMap t -> f t
         Refined t _ -> f t
-        Alternative t1 t2 _ -> f t1 `mappend` f t2
+        Or t1 t2 _ -> f t1 `mappend` f t2
         _ -> mempty
 
 instance Traversable (TyRep r p c) where
@@ -169,10 +169,10 @@ instance Traversable (TyRep r p c) where
         Ref name -> pure $ Ref name
         Tuple s ts -> Tuple s <$> (traverse f ts)
         Array t -> Array <$> f t
-        NamedTuple s ps -> NamedTuple s <$> sequenceA [(k,) <$> f v | (k, v) <- ps]
+        Object s ps -> Object s <$> sequenceA [(k,) <$> f v | (k, v) <- ps]
         TextMap t -> TextMap <$> f t
         Refined t p -> Refined <$> f t <*> pure p
-        Alternative t1 t2 c -> Alternative <$> (f t1) <*> (f t2) <*> pure c
+        Or t1 t2 c -> Or <$> (f t1) <*> (f t2) <*> pure c
 
 ---------------------- useful tools about TyRep ---------------------
 
@@ -189,19 +189,19 @@ matchOutline tr d = case (tr, d) of
     (ConstBoolean b, (JsonBoolean b')) -> b == b'
     (Tuple _ _, (JsonArray _)) -> True
     (Array _, (JsonArray _)) -> True
-    (NamedTuple _ _, (JsonObject _)) -> True
+    (Object _ _, (JsonObject _)) -> True
     (TextMap _, (JsonObject _)) -> True
     (Refined _ _, _) -> True
     (Ref _, _) -> True
-    (Alternative _ _ _, _) -> True
+    (Or _ _ _, _) -> True
     _ -> False
 
 --------------------- trivial things about TyRep --------------------
 
--- | strictness label for Tuple & NamedTuple
+-- | strictness label for Tuple & Object
 data Strictness = Strict | Tolerant deriving (Show, Eq, Ord)
 
-instance (ShowRef r, ShowAlternative c, Show tr') => Show (TyRep r p c tr') where
+instance (ShowRef r, ShowOr c, Show tr') => Show (TyRep r p c tr') where
     show tr = case tr of
         Anything -> "Anything"
         Number -> "Number"
@@ -214,15 +214,15 @@ instance (ShowRef r, ShowAlternative c, Show tr') => Show (TyRep r p c tr') wher
         Tuple Strict ts -> "(" ++ intercalate ", " (map show ts) ++ ")"
         Tuple Tolerant ts -> "(" ++ intercalate ", " (map show ts ++ ["*"]) ++ ")"
         Array t -> "Array<" ++ show t ++ ">"
-        NamedTuple Strict ps -> "{" ++ intercalate ", " [showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ "}"
-        NamedTuple Tolerant ps -> "{" ++ intercalate ", " ([showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ ["*"]) ++ "}"
+        Object Strict ps -> "{" ++ intercalate ", " [showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ "}"
+        Object Tolerant ps -> "{" ++ intercalate ", " ([showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ ["*"]) ++ "}"
         TextMap t -> "Map<" ++ show t ++ ">"
         Ref name -> showRef name
         Refined t _ -> "Refined<" ++ show t ++ ">"
-        Alternative a b c -> "(" ++ show a ++ bar ++ show b ++ ")" where
-            bar = " " ++ showAlternative c ++ " "
+        Or a b c -> "(" ++ show a ++ bar ++ show b ++ ")" where
+            bar = " " ++ showOr c ++ " "
 
-instance {-# Overlapping #-} (ShowRef r, ShowAlternative c) => Show (Fix (TyRep r p c)) where
+instance {-# Overlapping #-} (ShowRef r, ShowOr c) => Show (Fix (TyRep r p c)) where
     show (Fix tr) = show tr
 
 class ShowRef a where
@@ -234,11 +234,11 @@ instance ShowRef [Char] where
 instance ShowRef () where
     showRef () = "$"
 
-class ShowAlternative a where
-    showAlternative :: a -> String
+class ShowOr a where
+    showOr :: a -> String
 
-instance ShowAlternative () where
-    showAlternative _ = "|?"
+instance ShowOr () where
+    showOr _ = "|?"
 
 ---------------------------------------------------------------------
 ----------------------- Spec & CSpec & Shape ------------------------
@@ -277,7 +277,7 @@ flipMatchChoice mc = case mc of
     MatchLeft -> MatchRight
     MatchNothing -> MatchNothing
 
--- | a choice maker helps to make choice on Alternative node
+-- | a choice maker helps to make choice on Or node
 -- | also an evidence of two shape not overlapping
 data ChoiceMaker =
       ViaArrayLength Int Int
@@ -340,8 +340,8 @@ makeChoice cm = case cm of
             (MatchNothing, MatchNothing) -> MatchNothing
             _ -> MatchNothing -- seems impossible
 
-instance ShowAlternative ChoiceMaker where
-    showAlternative _ = "|"
+instance ShowOr ChoiceMaker where
+    showOr _ = "|"
 
 -------------- useful tools about Spec & CSpec & Shape --------------
 
@@ -363,7 +363,7 @@ toShape dep env sp | dep >= 0 = evalState (cataM g sp) M.empty where
                 modify (M.alter (Just . (+(-1)) . fromJust) name)
                 return r
         Refined t _ -> pure (Fix (Refined t ()))
-        Alternative t1 t2 _ -> pure (Fix $ Alternative t1 t2 ())
+        Or t1 t2 _ -> pure (Fix $ Or t1 t2 ())
         t -> pure (Fix $ quadmap (const ()) (const ()) (const ()) id t)
 
 toShape' :: (Fix (TyRep Name p c)) -> Shape
@@ -375,11 +375,11 @@ isDeterminateShape = cata f where
     f tr = case tr of
         Tuple _ ts -> and ts
         Array t -> t
-        NamedTuple _ ps -> and (map snd ps)
+        Object _ ps -> and (map snd ps)
         TextMap t -> t
         Ref _ -> False -- blackbox item
         Refined t _ -> False -- blackbox item
-        Alternative a b _ -> a && b
+        Or a b _ -> a && b
         _ -> True
 
 -- | decide whether a shape accept JsonNull, treat blackbox item as True
@@ -387,7 +387,7 @@ acceptNull :: Shape -> Bool
 acceptNull (Fix tr) = case tr of
     Null -> True
     Anything -> True
-    Alternative t1 t2 _ -> acceptNull t1 || acceptNull t2
+    Or t1 t2 _ -> acceptNull t1 || acceptNull t2
     Ref _ -> True -- blackbox item
     Refined t _ -> acceptNull t -- blackbox item
     _ -> False
@@ -406,11 +406,11 @@ example (Fix tr) = case tr of
     ConstBoolean b -> JsonBoolean b
     Tuple _ ts -> JsonArray (map example ts)
     Array t -> JsonArray [(example t)]
-    NamedTuple _ ps -> JsonObject [(k, example t) | (k, t) <- ps]
+    Object _ ps -> JsonObject [(k, example t) | (k, t) <- ps]
     TextMap t -> JsonObject [("k", example t)]
     Ref _ -> JsonNull --NOTE: not a rigorous example
     Refined t _ -> example t --NOTE: not a rigorous example
-    Alternative a b _ -> example a
+    Or a b _ -> example a
 
 toJsonSpec :: Spec -> JsonData
 toJsonSpec (Fix tr) = case tr of
@@ -425,12 +425,12 @@ toJsonSpec (Fix tr) = case tr of
     Tuple Strict ts -> JsonArray (map toJsonSpec ts)
     Tuple Tolerant ts -> JsonArray (map toJsonSpec ts ++ [tag "Tolerant"])
     Array t -> JsonArray [tag "Array", (toJsonSpec t)]
-    NamedTuple Strict ps -> JsonObject [(k, toJsonSpec t) | (k, t) <- ps]
-    NamedTuple Tolerant ps -> JsonObject ([(k, toJsonSpec t) | (k, t) <- ps] ++ [("*", tag "Tolerant")])
+    Object Strict ps -> JsonObject [(k, toJsonSpec t) | (k, t) <- ps]
+    Object Tolerant ps -> JsonObject ([(k, toJsonSpec t) | (k, t) <- ps] ++ [("*", tag "Tolerant")])
     TextMap t -> JsonArray [tag "TextMap", (toJsonSpec t)]
     Ref name -> JsonText ('$':name)
     Refined t p -> JsonArray [tag "Refined", (toJsonSpec t)]
-    Alternative a b _ -> JsonArray [tag "Alternative", (toJsonSpec a), (toJsonSpec b)]
+    Or a b _ -> JsonArray [tag "Or", (toJsonSpec a), (toJsonSpec b)]
     where
         tag s = JsonText ('#':s)
         escape s = case s of (c:s') -> if c `elem` ['#', '$', '\\'] then '\\':s else s; _ -> s
@@ -452,7 +452,7 @@ fromJsonSpec d = Fix $ case d of
         (JsonText "#Array" : xs') -> Array (fromJsonSpec (head xs'))
         (JsonText "#TextMap" : xs') -> TextMap (fromJsonSpec (head xs'))
         (JsonText "#Refined" : xs') -> Refined (fromJsonSpec (head xs')) undefined
-        (JsonText "#Alternative" : xs') -> Alternative (fromJsonSpec (head xs')) (fromJsonSpec (head (tail xs'))) ()
+        (JsonText "#Or" : xs') -> Or (fromJsonSpec (head xs')) (fromJsonSpec (head (tail xs'))) ()
         _ ->
             let (tol, xs') = partition (== JsonText "#Tolerant") xs
                 s = if (null tol) then Strict else Tolerant
@@ -460,7 +460,7 @@ fromJsonSpec d = Fix $ case d of
     JsonObject ps ->
         let (tol, ps') = partition ((== JsonText "#Tolerant") . snd) ps
             s = if (null tol) then Strict else Tolerant
-        in NamedTuple s [(k, fromJsonSpec v) | (k, v) <- ps']
+        in Object s [(k, fromJsonSpec v) | (k, v) <- ps']
     where
         unescape s = case s of ('\\':s') -> s'; _ -> s
 
@@ -503,7 +503,7 @@ data UnMatchedReason = DirectCause DirectUMR CSpec JsonData | StepCause StepUMR 
 data DirectUMR =
       OutlineNotMatch
     | TupleLengthNotEqual
-    | NamedTupleKeySetNotEqual
+    | ObjectKeySetNotEqual
     | RefinedPropNotMatch --TODO: add prop description sentence
     | OrMatchNothing ChoiceMaker
     deriving (Show, Eq)
@@ -512,7 +512,7 @@ data DirectUMR =
 data StepUMR =
       TupleFieldNotMatch Int
     | ArrayElementNotMatch Int
-    | NamedTupleFieldNotMatch String
+    | ObjectFieldNotMatch String
     | TextMapElementNotMatch String
     | RefinedShapeNotMatch
     | OrNotMatchLeft
@@ -550,7 +550,7 @@ explainUnMatchedReason reason = iter reason undefined [] where
     specAccessor r = case r of
         TupleFieldNotMatch i -> "(" ++ show i ++ ")"
         ArrayElementNotMatch i -> "[" ++ show i ++ "]"
-        NamedTupleFieldNotMatch k -> "(" ++ show k ++ ")"
+        ObjectFieldNotMatch k -> "(" ++ show k ++ ")"
         TextMapElementNotMatch k -> "[" ++ show k ++ "]"
         RefinedShapeNotMatch -> "<refined>"
         OrNotMatchLeft -> "<left>"
@@ -560,7 +560,7 @@ explainUnMatchedReason reason = iter reason undefined [] where
     dataAccessor r = case r of
         TupleFieldNotMatch i -> "[" ++ show i ++ "]"
         ArrayElementNotMatch i -> "[" ++ show i ++ "]"
-        NamedTupleFieldNotMatch k -> (if isIdentifier k then "." ++ k else "[" ++ show k ++ "]")
+        ObjectFieldNotMatch k -> (if isIdentifier k then "." ++ k else "[" ++ show k ++ "]")
         TextMapElementNotMatch k -> "[" ++ show k ++ "]"
         _ -> ""
 

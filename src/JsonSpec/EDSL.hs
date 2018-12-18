@@ -1,18 +1,18 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Apache License 2.0
 
 -- | Spec EDSL
-module AlgebraicJSON.EDSL where
+module JsonSpec.EDSL where
 
 import Data.Fix
-import AlgebraicJSON.Core.Definitions (TyRep(..), Strictness(..), DecProp(..), JsonData(..), Spec, Name)
+import JsonSpec.Core.Definitions (TyRep(..), Strictness(..), DecProp(..), JsonData(..), Spec, Name)
 
 tuple, tuple' :: [Spec] -> Spec
 tuple ts = Fix (Tuple Strict ts)
 tuple' ts = Fix (Tuple Tolerant ts)
 
 object, object' :: [(Name, Spec)] -> Spec
-object ps = Fix (NamedTuple Strict ps)
-object' ps = Fix (NamedTuple Tolerant ps)
+object ps = Fix (Object Strict ps)
+object' ps = Fix (Object Tolerant ps)
 
 textmap, array :: Spec -> Spec
 textmap t = Fix (TextMap t)
@@ -39,8 +39,8 @@ ref s = Fix (Ref s)
 refined :: Spec -> (JsonData -> Bool) -> Spec
 refined sp prop = Fix (Refined sp (DecProp prop))
 
--- | infix constructor of an Alternative node
+-- | infix constructor of an Or node
 (<|||>) :: Spec -> Spec -> Spec
-a <|||> b = Fix $ Alternative a b ()
+a <|||> b = Fix $ Or a b ()
 infixr 9 <|||>
 

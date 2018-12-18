@@ -1,6 +1,6 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Apache License 2.0
 
-module AlgebraicJSON.Core.Tools where
+module JsonSpec.Core.Tools where
 
 import Data.Char
 import qualified Data.Set as S

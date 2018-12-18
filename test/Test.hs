@@ -19,12 +19,12 @@ import Data.Bytes.Put
 import Test.Hspec hiding (Spec, example)
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
-import AlgebraicJSON.Core.Tools
-import AlgebraicJSON.Core.Definitions
-import AlgebraicJSON.Core.Functions
-import AlgebraicJSON.Core.Generators
-import AlgebraicJSON.Core.Serialize
-import AlgebraicJSON.EDSL
+import JsonSpec.Core.Tools
+import JsonSpec.Core.Definitions
+import JsonSpec.Core.Functions
+import JsonSpec.Core.Generators
+import JsonSpec.Core.Serialize
+import JsonSpec.EDSL
 
 isRight :: Either a b -> Bool
 isRight e = either (const False) (const True) e
@@ -48,7 +48,7 @@ main = hspec $ do
           (case (compareSortedListWith id onlyL onlyR) of (both', _, _) -> both' === []) .&&.
           (case (compareSortedListWith id bothL bothR) of (both', _, _) -> both' === both)
 
-  describe "AlgebraicJSON" $ do
+  describe "JsonSpec" $ do
     prop "example-matchSpec" $
       \(sp :: CSpec) ->
         let sh = toShape' sp
@@ -56,7 +56,7 @@ main = hspec $ do
 
     prop "matchSpec-Or-commutative" $
       \(sp1 :: CSpec) (sp2 :: CSpec) (d :: JsonData) ->
-        let rst = (,) <$> checkAlternative M.empty sp1 sp2 <*> checkAlternative M.empty sp2 sp1
+        let rst = (,) <$> checkOr M.empty sp1 sp2 <*> checkOr M.empty sp2 sp1
         in isRight rst ==> case rst of Right (or1, or2) -> (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
 
     prop "checkSpec-Or-commutative" $
@@ -77,7 +77,7 @@ main = hspec $ do
       \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
         let rst = checkSpec M.empty (sp1 <|||> sp2)
         in isRight rst ==> case rst of
-          Right or1@(Fix (Alternative sp1' sp2' _)) -> matchSpec' sp1' d == Matched ==> matchSpec' or1 d === Matched
+          Right or1@(Fix (Or sp1' sp2' _)) -> matchSpec' sp1' d == Matched ==> matchSpec' or1 d === Matched
 
     prop "matchSpec-Tolerant-Tuple-accept-redurant-null" $
       \(sps :: [Spec]) (ds :: [JsonData]) ->
@@ -132,8 +132,8 @@ main = hspec $ do
       show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
       show (tryMatchSpec env ast dat1) `shouldBe` "Right Matched"
       show (tryMatchSpec env ast dat2) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (TupleFieldNotMatch 1) (DirectCause OutlineNotMatch Number \"1\"))))"
-      show (tryMatchSpec env spec3 data3) `shouldBe` "Right (UnMatched (StepCause (NamedTupleFieldNotMatch \"y\") (StepCause (NamedTupleFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\"))))"
-      show (tryMatchSpec env spec4 data4) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (NamedTupleFieldNotMatch \"y\") (StepCause (NamedTupleFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\")))))"
+      show (tryMatchSpec env spec3 data3) `shouldBe` "Right (UnMatched (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\"))))"
+      show (tryMatchSpec env spec4 data4) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\")))))"
       show (tryMatchSpec M.empty (tuple' [number, cnull]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
       show (tryMatchSpec M.empty (tuple' [number, cnull] <|||> tuple [cnumber 1, cnumber 1]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
       show (checkSpec M.empty (tuple' [refined cnull (const False)] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure (Refined<Null>, *) () [])"

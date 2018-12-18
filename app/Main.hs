@@ -1,6 +1,6 @@
 module Main where
 
-import AlgebraicJSON
+import JsonSpec
 
 main :: IO ()
 main = print "type checked"

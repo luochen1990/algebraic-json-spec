@@ -3,8 +3,8 @@
 {-# language TupleSections #-}
 {-# language RankNTypes #-}
 
-module AlgebraicJSON.Core.Functions (
-    checkSpec, checkEnv, checkAlternative, CheckFailedReason(..),
+module JsonSpec.Core.Functions (
+    checkSpec, checkEnv, checkOr, CheckFailedReason(..),
     matchSpec, tryMatchSpec,
     everywhereJ,
     shapeOverlap, ShapeRelation(..), Sureness(..), -- export for test
@@ -22,8 +22,8 @@ import Data.Fix
 import Text.MultilingualShow
 import Control.Monad.State
 import GHC.Exts (sortWith)
-import AlgebraicJSON.Core.Tools
-import AlgebraicJSON.Core.Definitions
+import JsonSpec.Core.Tools
+import JsonSpec.Core.Definitions
 
 ------------------- ShapeRelation & shapeOverlap --------------------
 
@@ -63,7 +63,7 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
         in blurWith s $ joinTupleComponents (zip (zipWith shapeOverlap (repeat t1) (notNullPrefix s2 ts2)) (repeat MatchLeft))
     (Array t1, Array t2) ->
         Overlapping Sure (JsonArray []) -- trivial case
-    (NamedTuple s1 ps1, NamedTuple s2 ps2) ->
+    (Object s1 ps1, Object s2 ps2) ->
         let (common, fstOnly, sndOnly) = compareSortedListWith fst (sortWith fst ps1) (sortWith fst ps2)
             joinCommonParts = joinObjectComponents $ do
                 ((k, t1), (_, t2)) <- common
@@ -92,17 +92,17 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
                     blurWith (foldMap (sureness . snd) psMayNull) (extendOverlappingEvidenceObj sndOnly joinCommonParts)
             (Tolerant, Tolerant) ->
                 extendOverlappingEvidenceObj (fstOnly ++ sndOnly) joinCommonParts
-    (NamedTuple s1 ps1, TextMap t2) ->
+    (Object s1 ps1, TextMap t2) ->
         let s = sureness shape1 <> sureness shape2
         in blurWith s $ joinObjectComponents [(k, shapeOverlap t1 t2, MatchRight) | (k, t1) <- ps1, s1 == Strict || not (acceptNull t1)]
-    (TextMap t1, NamedTuple s2 ps2) ->
+    (TextMap t1, Object s2 ps2) ->
         let s = sureness shape1 <> sureness shape2
         in blurWith s $ joinObjectComponents [(k, shapeOverlap t1 t2, MatchLeft) | (k, t2) <- ps2, s2 == Strict || not (acceptNull t2)]
     (TextMap t1, TextMap t2) ->
         Overlapping Sure (JsonObject []) -- trivial case
-    (Alternative t1 t2 _, t3) ->
+    (Or t1 t2 _, t3) ->
         joinLeftOrPath (shapeOverlap t1 (Fix t3)) (shapeOverlap t2 (Fix t3))
-    (t1, Alternative t2 t3 _) ->
+    (t1, Or t2 t3 _) ->
         joinRightOrPath (shapeOverlap (Fix t1) t2) (shapeOverlap (Fix t1) t3)
     (Refined t1 _, t2) -> blurWith Unsure (shapeOverlap t1 (Fix t2)) -- Refined condition is treated as blackbox
     (t1, Refined t2 _) -> blurWith Unsure (shapeOverlap (Fix t1) t2) -- Refined condition is treated as blackbox
@@ -134,7 +134,7 @@ blurWith s sr = case sr of Overlapping Sure d -> Overlapping s d; _ -> sr
 
 extendOverlappingEvidenceObj :: [(String, Shape)] -> ShapeRelation -> ShapeRelation
 extendOverlappingEvidenceObj ps sr = case sr of
-    Overlapping s d -> let sh' = (Fix $ NamedTuple Strict ps) in Overlapping (s <> sureness sh') (extendObj d (example sh'))
+    Overlapping s d -> let sh' = (Fix $ Object Strict ps) in Overlapping (s <> sureness sh') (extendObj d (example sh'))
     NonOverlapping c -> NonOverlapping c
 
 notNullPrefix :: Strictness -> [Shape] -> [Shape]
@@ -189,12 +189,13 @@ data CheckFailedReason =
 checkSpec :: Env Spec -> Spec -> Either CheckFailedReason CSpec
 checkSpec env = cataM f where
     f :: TyRep Name DecProp () CSpec -> Either CheckFailedReason CSpec
-    f (Alternative a b ()) = checkAlternative env a b
+    f (Or a b ()) = checkOr env a b
     f tr = Right (Fix (quadmap3 undefined tr))
 
-checkAlternative :: forall p c. Env (Fix (TyRep Name p c)) -> CSpec -> CSpec -> Either CheckFailedReason CSpec
-checkAlternative env a b = case shapeOverlap (toShape 1 env a) (toShape 1 env b) of
-    (NonOverlapping c) -> Right (Fix $ Alternative a b c)
+-- | check if two CSpec is non-overlapping and construct an CSpec via the constructor Or
+checkOr :: forall p c. Env (Fix (TyRep Name p c)) -> CSpec -> CSpec -> Either CheckFailedReason CSpec
+checkOr env a b = case shapeOverlap (toShape 1 env a) (toShape 1 env b) of
+    (NonOverlapping c) -> Right (Fix $ Or a b c)
     (Overlapping s d) -> Left (ExistOverlappingOr s a b d)
 
 -- | check (Env Spec) to get (Env CSpec)
@@ -215,14 +216,14 @@ matchSpec env spec@(Fix t) d = let rec = matchSpec env in case (t, d) of
     (Tuple Tolerant ts, d@(JsonArray xs)) ->
         fold [wrap (TupleFieldNotMatch i) (rec t x) | (i, t, x) <- zip3 [0..] ts (xs ++ repeat JsonNull)]
     (Array t, (JsonArray xs)) -> fold [wrap (ArrayElementNotMatch i) (rec t x) | (i, x) <- zip [0..] xs]
-    (NamedTuple Strict ps, d@(JsonObject kvs)) ->
-        (setEq (map fst ps) (map fst kvs) `otherwise` (DirectCause NamedTupleKeySetNotEqual spec d)) <>
-        fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
-    (NamedTuple Tolerant ps, d@(JsonObject kvs)) ->
-        fold [wrap (NamedTupleFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
+    (Object Strict ps, d@(JsonObject kvs)) ->
+        (setEq (map fst ps) (map fst kvs) `otherwise` (DirectCause ObjectKeySetNotEqual spec d)) <>
+        fold [wrap (ObjectFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
+    (Object Tolerant ps, d@(JsonObject kvs)) ->
+        fold [wrap (ObjectFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
     (TextMap t, (JsonObject kvs)) -> fold [wrap (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
     (t@(Refined t1 p), d) -> wrap RefinedShapeNotMatch (rec t1 d) <> (testProp p d `otherwise` (DirectCause RefinedPropNotMatch spec d))
-    (t@(Alternative t1 t2 c), d) -> case makeChoice c d of
+    (t@(Or t1 t2 c), d) -> case makeChoice c d of
         MatchLeft -> wrap OrNotMatchLeft (rec t1 d)
         MatchRight -> wrap OrNotMatchRight (rec t2 d)
         MatchNothing -> UnMatched (DirectCause (OrMatchNothing c) spec d)
@@ -241,10 +242,10 @@ everywhereJ env spec name g dat = rec spec dat where
     rec (Fix tr) dat = case (tr, dat) of
         (Tuple _ ts, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | (t, x) <- zip ts xs]) >>= g
         (Array t, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | x <- xs]) >>= g
-        (NamedTuple _ ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k,) <$> rec t (lookupObj' k d) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
+        (Object _ ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k,) <$> rec t (lookupObj' k d) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
         (TextMap t, (JsonObject kvs)) -> (JsonObject <$> sequence [(k,) <$> rec t v | (k, v) <- kvs]) >>= g
         (Refined t _, d) -> rec t d
-        (Alternative t1 t2 c, d) -> case makeChoice c d of
+        (Or t1 t2 c, d) -> case makeChoice c d of
             MatchLeft -> rec t1 d
             MatchRight -> rec t2 d
             MatchNothing -> error "everywhereJ not used correctly (1)"

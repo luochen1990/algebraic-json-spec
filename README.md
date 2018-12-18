@@ -1,9 +1,9 @@
-[![Build Status](https://travis-ci.org/luochen1990/algebraic-json.svg?branch=master)](https://travis-ci.org/luochen1990/algebraic-json)
+[![Build Status](https://travis-ci.org/luochen1990/algebraic-json-spec.svg?branch=master)](https://travis-ci.org/luochen1990/algebraic-json-spec)
 
-Algebraic JSON
-==============
+Algebraic JSON Spec
+===================
 
-A JSON data format specification tool.
+JSON specification, validating, serialization and generic programming. Inspired by [Algebraic Data Type](https://en.wikipedia.org/wiki/Algebraic_data_type) in Haskell.
 
 Features
 --------

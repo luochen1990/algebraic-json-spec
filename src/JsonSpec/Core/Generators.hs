@@ -5,15 +5,15 @@
 {-# language TypeSynonymInstances #-}
 {-# language FlexibleInstances #-}
 
-module AlgebraicJSON.Core.Generators where
+module JsonSpec.Core.Generators where
 
 import qualified Data.Map as M
 import Data.List
 import Data.Fix
 import Data.Maybe (mapMaybe)
 import Test.QuickCheck
-import AlgebraicJSON.Core.Definitions
-import AlgebraicJSON.Core.Functions (checkSpec)
+import JsonSpec.Core.Definitions
+import JsonSpec.Core.Functions (checkSpec)
 
 arbKey, arbKey' :: Gen String
 arbKey = elements ["a", "b", "c", "d", "e"]
@@ -77,17 +77,17 @@ instance Arbitrary Spec where
       tree' 0,
       Fix <$> (Tuple <$> arbitrary <*> (arbNat >>= \m -> vectorOf m (tree' ((n-1) `div` m)))),
       Fix <$> (Array <$> (tree' (n-1))),
-      Fix <$> (NamedTuple <$> arbitrary <*> (arbNat >>= \m -> arbMap m arbKey (tree' ((n-1) `div` m)))),
+      Fix <$> (Object <$> arbitrary <*> (arbNat >>= \m -> arbMap m arbKey (tree' ((n-1) `div` m)))),
       Fix <$> (TextMap <$> (tree' (n-1))),
       Fix <$> (arbNatSized (n-1) >>= \k -> (Refined <$> (tree' (n-1-k)) <*> resize k arbitrary)),
-      Fix <$> (Alternative <$> tree' ((n-1) `div` 2) <*> tree' ((n-1) `div` 2) <*> pure ())]
+      Fix <$> (Or <$> tree' ((n-1) `div` 2) <*> tree' ((n-1) `div` 2) <*> pure ())]
   shrink (Fix tr) = case tr of
     Tuple s ts -> Fix Null : ts ++ [Fix $ Tuple s ts' | ts' <- shrinkList shrink ts] ++ [Fix $ Tuple Strict ts | s == Tolerant]
     Array t -> Fix Null : t : [Fix $ Array t' | t' <- shrink t]
-    NamedTuple s ps -> Fix Null : map snd ps ++ [Fix $ NamedTuple s ps' | ps' <- shrinkList shrinkSnd ps] ++ [Fix $ NamedTuple Strict ps | s == Tolerant]
+    Object s ps -> Fix Null : map snd ps ++ [Fix $ Object s ps' | ps' <- shrinkList shrinkSnd ps] ++ [Fix $ Object Strict ps | s == Tolerant]
     TextMap t -> Fix Null : t : [Fix $ TextMap t' | t' <- shrink t]
     Refined t p -> Fix Null : t : [Fix $ Refined t' p | t' <- shrink t]
-    Alternative t1 t2 _ -> Fix Null : [t1, t2] ++ [Fix $ Alternative t1' t2' () | (t1', t2') <- shrink (t1, t2)]
+    Or t1 t2 _ -> Fix Null : [t1, t2] ++ [Fix $ Or t1' t2' () | (t1', t2') <- shrink (t1, t2)]
     ConstNumber x -> Fix Null : [Fix $ ConstNumber 1 | x /= 1]
     ConstText s -> Fix Null : [Fix $ ConstText "a" | s /= "a"]
     Null -> []
@@ -117,17 +117,17 @@ arbitraryJ spec@(Fix tr) = sized (tree' tr) where
       in arbNatSized (l - l' + 1) >>= \m ->
         let ts'' = take (l' + m) (ts ++ repeat (Fix Anything)) in tree' (Tuple Strict ts'') (max 0 (n-1))
     Array (Fix t) -> arbNatSized (min 3 n) >>= \m -> JsonArray <$> vectorOf m (tree' t (max 0 (n-m-1) `div` m))
-    NamedTuple Strict ps -> let m = length ps in JsonObject <$> sequence [(k,) <$> tree' t (max 0 (n-m-1) `div` m) | (k, (Fix t)) <- ps]
-    NamedTuple Tolerant ps -> sequence [arbNatSized (min 1 n), arbNatSized 1] >>= \[n1, n2] ->
+    Object Strict ps -> let m = length ps in JsonObject <$> sequence [(k,) <$> tree' t (max 0 (n-m-1) `div` m) | (k, (Fix t)) <- ps]
+    Object Tolerant ps -> sequence [arbNatSized (min 1 n), arbNatSized 1] >>= \[n1, n2] ->
       arbMap n1 arbKey' (pure $ Fix Anything) >>= \ps1_ ->
         let (ps2, ps1) = partition (acceptNull . toShape' . snd) ps
             ps1' = ps1 ++ ps1_
             ps2' = drop n2 ps2
-        in tree' (NamedTuple Strict (ps1' ++ ps2')) (max 0 (n-1-n1))
+        in tree' (Object Strict (ps1' ++ ps2')) (max 0 (n-1-n1))
     TextMap (Fix t) -> arbNatSized (min 3 n) >>= \m -> JsonObject <$> arbMap m arbKey (tree' t (max 0 (n-m-1) `div` m))
     Refined (Fix t) p -> tree' t (max 0 (n-1)) `suchThat` testProp p
     Ref name -> error "arbitraryJ should not be used on Ref"
-    Alternative (Fix a) (Fix b) _ -> oneof [tree' a n, tree' b n]
+    Or (Fix a) (Fix b) _ -> oneof [tree' a n, tree' b n]
 
 sampleJ :: Spec -> IO ()
 sampleJ sp = sample (arbitraryJ (either undefined id (checkSpec M.empty sp)))
