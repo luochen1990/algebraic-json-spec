@@ -1,11 +1,10 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Apache License 2.0
 
+-- | Some general tools
 module JsonSpec.Core.Tools where
 
 import Data.Char
 import qualified Data.Set as S
-
--- general tools
 
 compareSortedListWith :: Ord b => (a -> b) -> [a] -> [a] -> ([(a, a)], [a], [a])
 compareSortedListWith key xs ys = iter xs ys [] [] [] where

@@ -3,6 +3,7 @@
 {-# language TupleSections #-}
 {-# language FlexibleInstances #-}
 
+-- | Providing core definitions about JsonSpec
 module JsonSpec.Core.Definitions where
 
 import qualified Data.Map as M
@@ -18,7 +19,7 @@ import Control.Monad.State
 import JsonSpec.Core.Tools
 
 ---------------------------------------------------------------------
---------------------------- JsonData --------------------------------
+-- * JsonData
 ---------------------------------------------------------------------
 
 -- | JSON Data in ADT
@@ -54,12 +55,12 @@ lookupObj' k (JsonObject kvs) = (fromMaybe JsonNull (M.lookup k (M.fromList kvs)
 lookupObj' _ _ = error "lookupObj' must be used on JsonObject"
 
 ---------------------------------------------------------------------
------------------------------- TyRep --------------------------------
+-- * TyRep
 ---------------------------------------------------------------------
 
 -- | TyRep r p c tr' is a generic representation of Spec & CSpec & Shape,
--- | with Ref indexed by r, Refined with p, Or attached with c,
--- | and recursively defined on tr'.
+--   with Ref indexed by r, Refined with p, Or attached with c,
+--   and recursively defined on tr'.
 data TyRep r p c tr' =
       Anything
     | Number
@@ -78,7 +79,7 @@ data TyRep r p c tr' =
     | Or tr' tr' c
 
 -- | a tool function to filter out prim TyRep nodes,
--- | we can use it to simplify pattern matching logic.
+--   we can use it to simplify pattern matching logic.
 isPrimTyRepNode :: TyRep r p c tr' -> Bool
 isPrimTyRepNode tr = case tr of
     Anything -> True
@@ -91,7 +92,7 @@ isPrimTyRepNode tr = case tr of
     ConstBoolean b -> True
     _ -> False
 
-------------------- useful instances about TyRep --------------------
+-- ** useful instances about TyRep
 
 instance (Eq r, Eq p, Eq c, Eq tr') => Eq (TyRep r p c tr') where
     tr1 == tr2 = case (tr1, tr2) of
@@ -173,7 +174,7 @@ instance Traversable (TyRep r p c) where
         Refined t p -> Refined <$> f t <*> pure p
         Or t1 t2 c -> Or <$> (f t1) <*> (f t2) <*> pure c
 
----------------------- useful tools about TyRep ---------------------
+-- ** useful tools about TyRep
 
 -- | shadow matching, only returns False on very obvious cases, no recursion
 matchOutline :: TyRep r p c tr' -> JsonData -> Bool
@@ -195,10 +196,13 @@ matchOutline tr d = case (tr, d) of
     (Or _ _ _, _) -> True
     _ -> False
 
---------------------- trivial things about TyRep --------------------
+-- ** trivial things about TyRep
 
 -- | strictness label for Tuple & Object
-data Strictness = Strict | Tolerant deriving (Show, Eq, Ord)
+data Strictness
+    = Strict -- ^ a strict Tuple or Object doesnt accept redurant part, and null cannot be ignored
+    | Tolerant -- ^ a tolerant Tuple or Object accept redurant part, and treat not present part as null
+    deriving (Show, Eq, Ord)
 
 instance (ShowRef r, ShowOr c, Show tr') => Show (TyRep r p c tr') where
     show tr = case tr of
@@ -240,7 +244,7 @@ instance ShowOr () where
     showOr _ = "|?"
 
 ---------------------------------------------------------------------
------------------------ Spec & CSpec & Shape ------------------------
+-- * Spec & CSpec & Shape
 ---------------------------------------------------------------------
 
 -- | the Spec parsed from user input
@@ -252,7 +256,7 @@ type CSpec = Fix (TyRep Name DecProp ChoiceMaker)
 -- | the Shape of a Spec, ignore Ref, Refined information of Spec
 type Shape = Fix (TyRep () () ())
 
----------------------------- Name & Env -----------------------------
+-- ** Name & Env
 
 -- | the name of a user defined Spec
 type Name = String
@@ -260,12 +264,12 @@ type Name = String
 -- | the environment which contains information a
 type Env a = M.Map Name a
 
------------------------------- DecProp ------------------------------
+-- ** DecProp
 
 -- | a decidable proposition about JsonData
 data DecProp = DecProp {testProp :: JsonData -> Bool}
 
----------------------------- ChoiceMaker ----------------------------
+-- ** ChoiceMaker
 
 -- | a matching choice maked by choice maker
 data MatchChoice = MatchNothing | MatchLeft | MatchRight deriving (Show, Eq, Ord)
@@ -276,10 +280,10 @@ flipMatchChoice mc = case mc of
     MatchLeft -> MatchRight
     MatchNothing -> MatchNothing
 
--- | a choice maker helps to make choice on Or node
--- | also an evidence of two shape not overlapping
-data ChoiceMaker =
-      ViaArrayLength Int Int
+-- | a choice maker helps to make choice on Or node,
+--   also an evidence of two shape not overlapping
+data ChoiceMaker
+    = ViaArrayLength Int Int
     | ViaArrayLengthGT Int MatchChoice
     | ViaObjectHasKey String MatchChoice
     | ViaOutline (TyRep () () () Shape) (TyRep () () () Shape)
@@ -342,11 +346,13 @@ makeChoice cm = case cm of
 instance ShowOr ChoiceMaker where
     showOr _ = "|"
 
--------------- useful tools about Spec & CSpec & Shape --------------
+-- ** useful tools about Spec & CSpec & Shape
 
 toSpec :: CSpec -> Spec
 toSpec (Fix tr) = Fix $ quadmap id id (const ()) toSpec tr
 
+-- | generate an non-recursive and env-independent shape from a Spec or CSpec,
+--   a Nat depth is required to specify how many times a Ref should be expanded.
 toShape :: Int -> Env (Fix (TyRep Name p c)) -> (Fix (TyRep Name p' c')) -> Shape
 toShape dep env sp | dep >= 0 = evalState (cataM g sp) M.empty where
     g :: TyRep Name p'' c'' Shape -> State (M.Map Name Int) Shape
@@ -365,6 +371,7 @@ toShape dep env sp | dep >= 0 = evalState (cataM g sp) M.empty where
         Or t1 t2 _ -> pure (Fix $ Or t1 t2 ())
         t -> pure (Fix $ quadmap (const ()) (const ()) (const ()) id t)
 
+-- | a convenient variant of toShape, with depth = 0
 toShape' :: (Fix (TyRep Name p c)) -> Shape
 toShape' = toShape 0 M.empty
 
@@ -392,7 +399,7 @@ acceptNull (Fix tr) = case tr of
     _ -> False
 
 -- | generate example JsonData along a specific Shape,
--- | not rigorous: example matches the Spec only when it's shape isDeterminateShape
+--   not rigorous: example matches the Spec only when it's shape isDeterminateShape
 example :: Shape -> JsonData
 example (Fix tr) = case tr of
     Anything -> JsonNull
@@ -464,7 +471,7 @@ fromJsonSpec d = Fix $ case d of
         unescape s = case s of ('\\':s') -> s'; _ -> s
 
 ---------------------------------------------------------------------
----------------------------- MatchResult ----------------------------
+-- * MatchResult
 ---------------------------------------------------------------------
 
 -- | matching result when we try to match a specific JsonData to a specific Spec
@@ -482,8 +489,8 @@ wrapMR step rst = case rst of Matched -> Matched; UnMatched reason -> UnMatched 
 instance Eq MatchResult where
     a == b = case (a, b) of (Matched, Matched) -> True; (UnMatched _, UnMatched _) -> True; _ -> False
 
--- | mappend means if both components are Matched, then entireness is Matched
--- | mempty = Matched means when no component is considered, then we think it is Matched
+-- | mappend means if both components are Matched, then entireness is Matched,
+--   mempty = Matched means when no component is considered, then we think it is Matched
 instance Monoid MatchResult where
     mempty = Matched
     mappend = (<>)
@@ -493,7 +500,7 @@ instance Semigroup MatchResult where
     (<>) Matched r2 = r2
     (<>) r1 _ = r1
 
----------------- trivial things about MatchResult -------------------
+-- ** trivial things about MatchResult
 
 -- | representation of the reason why they are not matched
 data UnMatchedReason = DirectCause DirectUMR CSpec JsonData | StepCause StepUMR UnMatchedReason deriving (Show)

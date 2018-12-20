@@ -1,5 +1,6 @@
 -- Copyright 2018 LuoChen (luochen1990@gmail.com). Apache License 2.0
 
+-- Binary serialization & deserialization
 module JsonSpec.Core.Serialize (serializeJ, deserializeJ, serialList, deserialList) where
 
 import qualified Data.Map as M

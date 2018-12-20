@@ -3,11 +3,16 @@
 {-# language TupleSections #-}
 {-# language RankNTypes #-}
 
+-- | Implimenting core functions about JsonSpec
 module JsonSpec.Core.Functions (
+    -- * Spec Checking
     checkSpec, checkEnv, checkOr, CheckFailedReason(..),
+    -- * Validate JsonData via Spec
     matchSpec, tryMatchSpec,
+    -- * Generic Programming Tools
     everywhereJ,
-    shapeOverlap, ShapeRelation(..), Sureness(..), -- export for test
+    -- * internal things (exported for test)
+    shapeOverlap, ShapeRelation(..), Sureness(..),
 ) where
 
 --import Debug.Trace
@@ -24,7 +29,7 @@ import GHC.Exts (sortWith)
 import JsonSpec.Core.Tools
 import JsonSpec.Core.Definitions
 
-------------------- ShapeRelation & shapeOverlap --------------------
+-- * ShapeRelation & shapeOverlap
 
 -- | the overlapping relation of two Shape
 data ShapeRelation =
@@ -114,7 +119,7 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
         else if matchOutline tr1 (example shape2) then Overlapping Sure (example shape2)
         else NonOverlapping (ViaOutline tr1 tr2)
 
---------------- trivial things used in shapeOverlap -----------------
+-- * trivial things used in shapeOverlap
 
 instance Semigroup Sureness where
     (<>) = mappend
@@ -176,7 +181,7 @@ joinRightOrPath r1 r2 = case (r1, r2) of
     (_, Overlapping Unsure d2) -> Overlapping Unsure d2
     (NonOverlapping c12, NonOverlapping c13) -> NonOverlapping (ViaOrR c12 c13)
 
------------------------ checkSpec & checkEnv ------------------------
+-- * checkSpec & checkEnv
 
 -- | representation of the reason why we failed to check a Spec
 data CheckFailedReason =
@@ -204,7 +209,7 @@ checkEnv env = M.fromList <$> sequence [(k,) <$> wrapL (InvalidItemInEnv k) (che
 wrapL :: (a -> a) -> Either a b -> Either a b
 wrapL f e = case e of Left x -> Left (f x); Right y -> Right y
 
---------------------------- matchSpec -------------------------------
+-- * matchSpec
 
 -- | match CSpec and JsonData
 matchSpec :: Env CSpec -> CSpec -> JsonData -> MatchResult
@@ -233,7 +238,7 @@ matchSpec env spec@(Fix t) d = let rec = matchSpec env in case (t, d) of
 tryMatchSpec :: Env Spec -> Spec -> JsonData -> Either CheckFailedReason MatchResult
 tryMatchSpec env sp d = ((,) <$> checkEnv env <*> checkSpec env sp) >>= (\(env', sp') -> pure (matchSpec env' sp' d))
 
----------------------------- everywhereJ ----------------------------
+-- * everywhereJ
 
 -- | a generic programming tool, similar to everywhereM in Haskell
 everywhereJ :: Monad m => Env CSpec -> CSpec -> Name -> (JsonData -> m JsonData) -> (JsonData -> m JsonData)
