@@ -30,6 +30,7 @@ dependencies:
 - bytestring
 - megaparsec
 - parser-combinators
+- raw-strings-qq
 
 library:
   source-dirs: src
