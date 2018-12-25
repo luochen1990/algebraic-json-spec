@@ -214,14 +214,14 @@ instance (ShowRef r, ShowOr c, Show tr') => Show (TyRep r p c tr') where
         ConstNumber n -> show n
         ConstText s -> show s
         ConstBoolean b -> show b
-        Tuple Strict ts -> "(" ++ intercalate ", " (map show ts) ++ ")"
-        Tuple Tolerant ts -> "(" ++ intercalate ", " (map show ts ++ ["*"]) ++ ")"
-        Array t -> "Array<" ++ show t ++ ">"
+        Tuple Strict ts -> "[" ++ intercalate ", " (map show ts) ++ "]"
+        Tuple Tolerant ts -> "[" ++ intercalate ", " (map show ts ++ ["*"]) ++ "]"
+        Array t -> "(Array " ++ show t ++ ")"
         Object Strict ps -> "{" ++ intercalate ", " [showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ "}"
         Object Tolerant ps -> "{" ++ intercalate ", " ([showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ ["*"]) ++ "}"
-        TextMap t -> "Map<" ++ show t ++ ">"
+        TextMap t -> "(TextMap " ++ show t ++ ")"
         Ref name -> showRef name
-        Refined t _ -> "Refined<" ++ show t ++ ">"
+        Refined t _ -> "(Refined " ++ show t ++ ")"
         Or a b c -> "(" ++ show a ++ bar ++ show b ++ ")" where
             bar = " " ++ showOr c ++ " "
 
@@ -426,7 +426,7 @@ toJsonSpec (Fix tr) = case tr of
     Boolean -> tag "Boolean"
     Null -> JsonNull
     ConstNumber n -> JsonNumber n
-    ConstText s -> JsonText (escape s)
+    ConstText s -> JsonArray [tag "Lit", JsonText s]
     ConstBoolean b -> JsonBoolean b
     Tuple Strict ts -> JsonArray (map toJsonSpec ts)
     Tuple Tolerant ts -> JsonArray (map toJsonSpec ts ++ [tag "Tolerant"])
@@ -439,7 +439,6 @@ toJsonSpec (Fix tr) = case tr of
     Or a b _ -> JsonArray [tag "Or", (toJsonSpec a), (toJsonSpec b)]
     where
         tag s = JsonText ('#':s)
-        escape s = case s of (c:s') -> if c `elem` ['#', '$', '\\'] then '\\':s else s; _ -> s
 
 fromJsonSpec :: JsonData -> Spec
 fromJsonSpec d = Fix $ case d of
@@ -452,13 +451,13 @@ fromJsonSpec d = Fix $ case d of
             "Text" -> Text
             "Boolean" -> Boolean
         ('$':s') -> Ref s'
-        _ -> ConstText (unescape s)
     JsonBoolean b -> ConstBoolean b
     JsonArray xs -> case xs of
-        (JsonText "#Array" : xs') -> Array (fromJsonSpec (head xs'))
-        (JsonText "#TextMap" : xs') -> TextMap (fromJsonSpec (head xs'))
-        (JsonText "#Refined" : xs') -> Refined (fromJsonSpec (head xs')) undefined
-        (JsonText "#Or" : xs') -> Or (fromJsonSpec (head xs')) (fromJsonSpec (head (tail xs'))) ()
+        (JsonText "#Lit" : (JsonText s) : []) -> ConstText s
+        (JsonText "#Array" : x : []) -> Array (fromJsonSpec x)
+        (JsonText "#TextMap" : x : []) -> TextMap (fromJsonSpec x)
+        (JsonText "#Refined" : x : _) -> Refined (fromJsonSpec x) undefined
+        (JsonText "#Or" : x : y : []) -> Or (fromJsonSpec x) (fromJsonSpec y) ()
         _ ->
             let (tol, xs') = partition (== JsonText "#Tolerant") xs
                 s = if (null tol) then Strict else Tolerant
@@ -467,8 +466,6 @@ fromJsonSpec d = Fix $ case d of
         let (tol, ps') = partition ((== JsonText "#Tolerant") . snd) ps
             s = if (null tol) then Strict else Tolerant
         in Object s [(k, fromJsonSpec v) | (k, v) <- ps']
-    where
-        unescape s = case s of ('\\':s') -> s'; _ -> s
 
 ---------------------------------------------------------------------
 -- * MatchResult
@@ -554,9 +551,9 @@ explainUnMatchedReason reason = iter reason undefined [] where
         StepCause sr r -> iter r dc (path ++ [sr])
 
     specAccessor r = case r of
-        TupleFieldNotMatch i -> "(" ++ show i ++ ")"
+        TupleFieldNotMatch i -> "." ++ show i
         ArrayElementNotMatch i -> "[" ++ show i ++ "]"
-        ObjectFieldNotMatch k -> "(" ++ show k ++ ")"
+        ObjectFieldNotMatch k -> "." ++ if isIdentifier k then k else show k
         TextMapElementNotMatch k -> "[" ++ show k ++ "]"
         RefinedShapeNotMatch -> "<refined>"
         OrNotMatchLeft -> "<left>"

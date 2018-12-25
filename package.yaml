@@ -28,6 +28,8 @@ dependencies:
 - bytes
 - cereal
 - bytestring
+- megaparsec
+- parser-combinators
 
 library:
   source-dirs: src

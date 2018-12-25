@@ -8,7 +8,6 @@
 
 --import Debug.Trace
 import qualified Data.Map as M
-import qualified Data.Set as S
 import Data.List
 import Data.Fix
 import Data.Maybe (mapMaybe)
@@ -25,6 +24,7 @@ import JsonSpec.Core.Functions
 import JsonSpec.Core.Generators
 import JsonSpec.Core.Serialize
 import JsonSpec.EDSL
+import JsonSpec.DSL
 
 isRight :: Either a b -> Bool
 isRight e = either (const False) (const True) e
@@ -47,6 +47,11 @@ main = hspec $ do
           mergeSorted bothL onlyL === xs .&&. mergeSorted bothR onlyR === ys .&&.
           (case (compareSortedListWith id onlyL onlyR) of (both', _, _) -> both' === []) .&&.
           (case (compareSortedListWith id bothL bothR) of (both', _, _) -> both' === both)
+
+  describe "arith" $ do
+    prop "plus-comm" $
+      \(x :: Int) (y :: Int) ->
+        collect (x == y) $ x + y === y + x
 
   describe "JsonSpec" $ do
     prop "example-matchSpec" $
@@ -118,15 +123,20 @@ main = hspec $ do
           forAll (arbitraryJ sp) $ \d ->
             deserializeJ M.empty sp (serializeJ M.empty sp d) === d
 
+    prop "parseSpec <> show == identity" $
+      \(sp :: Spec) ->
+        isDeterminateShape (toShape' sp) ==>
+          show (parseSpec (show sp)) === show (Right sp :: Either String Spec)
+
     it "works with some simple cases" $ do
       show (checkSpec env (number <|||> text)) `shouldBe` "Right (Number | Text)"
       show (checkSpec env ((number <|||> text) <|||> (ctext "abc"))) `shouldBe` "Left (ExistOverlappingOr Sure (Number | Text) \"abc\" \"abc\")"
-      show (checkSpec env ((number <|||> text) <|||> case1)) `shouldBe` "Right ((Number | Text) | (\"Lit\", Number))"
-      show (checkSpec env ((number <|||> text) <|||> case2)) `shouldBe` "Right ((Number | Text) | (\"Add\", AST, AST))"
-      show (checkSpec env ((number <|||> text) <|||> ast)) `shouldBe` "Right ((Number | Text) | ((\"Lit\", Number) | (\"Add\", AST, AST)))"
-      show (checkSpec env ((number <|||> text) <|||> case1')) `shouldBe` "Right ((Number | Text) | (\"Lit\", 1.0))"
-      show (checkSpec env ((number <|||> text) <|||> (case1 <|||> case1'))) `shouldBe` "Left (ExistOverlappingOr Sure (\"Lit\", Number) (\"Lit\", 1.0) [\"Lit\", 1.0])"
-      show (toShape 1 env ast) `shouldBe` "((\"Lit\", Number) |? (\"Add\", ((\"Lit\", Number) |? (\"Add\", $, $)), ((\"Lit\", Number) |? (\"Add\", $, $))))"
+      show (checkSpec env ((number <|||> text) <|||> case1)) `shouldBe` "Right ((Number | Text) | [\"Lit\", Number])"
+      show (checkSpec env ((number <|||> text) <|||> case2)) `shouldBe` "Right ((Number | Text) | [\"Add\", AST, AST])"
+      show (checkSpec env ((number <|||> text) <|||> ast)) `shouldBe` "Right ((Number | Text) | ([\"Lit\", Number] | [\"Add\", AST, AST]))"
+      show (checkSpec env ((number <|||> text) <|||> case1')) `shouldBe` "Right ((Number | Text) | [\"Lit\", 1.0])"
+      show (checkSpec env ((number <|||> text) <|||> (case1 <|||> case1'))) `shouldBe` "Left (ExistOverlappingOr Sure [\"Lit\", Number] [\"Lit\", 1.0] [\"Lit\", 1.0])"
+      show (toShape 1 env ast) `shouldBe` "([\"Lit\", Number] |? [\"Add\", ([\"Lit\", Number] |? [\"Add\", $, $]), ([\"Lit\", Number] |? [\"Add\", $, $])])"
       show (checkSpec env (spec1 <|||> spec2)) `shouldBe` "Right ({x: Number, y: Number, *} | {z: Number, x: Text, *})"
       show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
       show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
@@ -136,7 +146,7 @@ main = hspec $ do
       show (tryMatchSpec env spec4 data4) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\")))))"
       show (tryMatchSpec M.empty (tuple' [number, cnull]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
       show (tryMatchSpec M.empty (tuple' [number, cnull] <|||> tuple [cnumber 1, cnumber 1]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
-      show (checkSpec M.empty (tuple' [refined cnull (const False)] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure (Refined<Null>, *) () [])"
+      show (checkSpec M.empty (tuple' [refined cnull (const False)] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure [(Refined Null), *] [] [])"
 
 -- test data
 

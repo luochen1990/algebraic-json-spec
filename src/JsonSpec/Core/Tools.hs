@@ -20,7 +20,8 @@ setEq :: Ord a => [a] -> [a] -> Bool
 setEq xs ys = S.fromList xs == S.fromList ys
 
 isIdentifier :: String -> Bool
-isIdentifier s = not (null s) && all isAlphaNum s
+isIdentifier [] = False
+isIdentifier (c:cs) = isAlpha c && all isAlphaNum cs
 
 showIdentifier :: String -> String
 showIdentifier s = if isIdentifier s then s else show s
