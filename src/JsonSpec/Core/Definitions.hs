@@ -13,10 +13,12 @@ import Data.Foldable (fold, foldMap)
 import Data.List
 import Data.Maybe
 import Data.Fix
+import Data.Text.Lazy (unpack)
 import Data.Char (isAlphaNum)
 import Text.MultilingualShow
 import Control.Monad.State
 import JsonSpec.Core.Tools
+import Text.Pretty.Simple
 
 ---------------------------------------------------------------------
 -- * JsonData
@@ -174,28 +176,6 @@ instance Traversable (TyRep r p c) where
         Refined t p -> Refined <$> f t <*> pure p
         Or t1 t2 c -> Or <$> (f t1) <*> (f t2) <*> pure c
 
--- ** useful tools about TyRep
-
--- | shadow matching, only returns False on very obvious cases, no recursion
-matchOutline :: TyRep r p c tr' -> JsonData -> Bool
-matchOutline tr d = case (tr, d) of
-    (Anything, _) -> True
-    (Number, (JsonNumber _)) -> True
-    (Text, (JsonText _)) -> True
-    (Boolean, (JsonBoolean _)) -> True
-    (Null, JsonNull) -> True
-    (ConstNumber n, (JsonNumber n')) -> n == n'
-    (ConstText s, (JsonText s')) -> s == s'
-    (ConstBoolean b, (JsonBoolean b')) -> b == b'
-    (Tuple _ _, (JsonArray _)) -> True
-    (Array _, (JsonArray _)) -> True
-    (Object _ _, (JsonObject _)) -> True
-    (TextMap _, (JsonObject _)) -> True
-    (Refined _ _, _) -> True
-    (Ref _, _) -> True
-    (Or _ _ _, _) -> True
-    _ -> False
-
 -- ** trivial things about TyRep
 
 -- | strictness label for Tuple & Object
@@ -286,7 +266,7 @@ data ChoiceMaker
     = ViaArrayLength Int Int
     | ViaArrayLengthGT Int MatchChoice
     | ViaObjectHasKey String MatchChoice
-    | ViaOutline (TyRep () () () Shape) (TyRep () () () Shape)
+    | ViaOutline (S.Set Outline) (S.Set Outline)
     | ViaArrayElement Int MatchChoice ChoiceMaker
     | ViaObjectField String MatchChoice ChoiceMaker
     | ViaOrL ChoiceMaker ChoiceMaker
@@ -316,9 +296,9 @@ makeChoice cm = case cm of
             (JsonObject _) ->
                 if isJust (lookupObj k d) then r else r'
             _ -> MatchNothing
-    ViaOutline tr1 tr2 -> \d ->
-        if (matchOutline tr1 d) then MatchLeft
-        else if (matchOutline tr2 d) then MatchRight
+    ViaOutline ols1 ols2 -> \d ->
+        if or [(matchOutline ol1 d) | ol1 <- S.toList ols1] then MatchLeft
+        else if or [(matchOutline ol2 d) | ol2 <- S.toList ols2] then MatchRight
         else MatchNothing
     ViaArrayElement i dft c -> \d -> case d of
         (JsonArray xs) ->
@@ -345,6 +325,58 @@ makeChoice cm = case cm of
 
 instance ShowOr ChoiceMaker where
     showOr _ = "|"
+
+-- ** Outline
+
+data Outline =
+      AnythingOL
+    | NumberOL
+    | TextOL
+    | BooleanOL
+    | ConstOL JsonData
+    | ArrayOL
+    | ObjectOL
+    deriving (Eq, Ord)
+
+instance Show Outline where
+    show ol = case ol of
+        AnythingOL -> "Anything"
+        NumberOL -> "Number"
+        TextOL -> "Text"
+        BooleanOL -> "Boolean"
+        ConstOL d -> show d
+        ArrayOL -> "Array"
+        ObjectOL -> "Object"
+
+toOutline :: Fix (TyRep r p c) -> Outline
+toOutline (Fix tr) = case tr of
+    Anything -> AnythingOL
+    Number -> NumberOL
+    Text -> TextOL
+    Boolean -> BooleanOL
+    Null -> ConstOL JsonNull
+    ConstNumber n -> ConstOL (JsonNumber n)
+    ConstText s -> ConstOL (JsonText s)
+    ConstBoolean b -> ConstOL (JsonBoolean b)
+    Tuple _ _ -> ArrayOL
+    Array _ -> ArrayOL
+    Object _ _ -> ObjectOL
+    TextMap _ -> ObjectOL
+    Ref _ -> AnythingOL
+    Refined t _ -> toOutline t
+    Or a b c -> AnythingOL
+
+-- | shadow matching, only returns False on very obvious cases, no recursion
+matchOutline :: Outline -> JsonData -> Bool
+matchOutline ol d = case (ol, d) of
+    (AnythingOL, _) -> True
+    (NumberOL, (JsonNumber _)) -> True
+    (TextOL, (JsonText _)) -> True
+    (BooleanOL, (JsonBoolean _)) -> True
+    (ConstOL d', _) -> d == d'
+    (ArrayOL, (JsonArray _)) -> True
+    (ObjectOL, (JsonObject _)) -> True
+    _ -> False
 
 -- ** useful tools about Spec & CSpec & Shape
 
@@ -418,54 +450,15 @@ example (Fix tr) = case tr of
     Refined t _ -> example t --NOTE: not a rigorous example
     Or a b _ -> example a
 
-toJsonSpec :: Spec -> JsonData
-toJsonSpec (Fix tr) = case tr of
-    Anything -> tag "Anything"
-    Number -> tag "Number"
-    Text -> tag "Text"
-    Boolean -> tag "Boolean"
-    Null -> JsonNull
-    ConstNumber n -> JsonNumber n
-    ConstText s -> JsonArray [tag "Lit", JsonText s]
-    ConstBoolean b -> JsonBoolean b
-    Tuple Strict ts -> JsonArray (map toJsonSpec ts)
-    Tuple Tolerant ts -> JsonArray (map toJsonSpec ts ++ [tag "Tolerant"])
-    Array t -> JsonArray [tag "Array", (toJsonSpec t)]
-    Object Strict ps -> JsonObject [(k, toJsonSpec t) | (k, t) <- ps]
-    Object Tolerant ps -> JsonObject ([(k, toJsonSpec t) | (k, t) <- ps] ++ [("*", tag "Tolerant")])
-    TextMap t -> JsonArray [tag "TextMap", (toJsonSpec t)]
-    Ref name -> JsonText ('$':name)
-    Refined t p -> JsonArray [tag "Refined", (toJsonSpec t)]
-    Or a b _ -> JsonArray [tag "Or", (toJsonSpec a), (toJsonSpec b)]
-    where
-        tag s = JsonText ('#':s)
+-- | show ChoiceMaker of a CSpec
+showChoiceMaker :: CSpec -> String
+showChoiceMaker (Fix (Or a b c)) = unpack (pShow (show c))
 
-fromJsonSpec :: JsonData -> Spec
-fromJsonSpec d = Fix $ case d of
-    JsonNull -> Null
-    JsonNumber n -> ConstNumber n
-    JsonText s -> case s of
-        ('#':s') -> case s' of
-            "Anything" -> Anything
-            "Number" -> Number
-            "Text" -> Text
-            "Boolean" -> Boolean
-        ('$':s') -> Ref s'
-    JsonBoolean b -> ConstBoolean b
-    JsonArray xs -> case xs of
-        (JsonText "#Lit" : (JsonText s) : []) -> ConstText s
-        (JsonText "#Array" : x : []) -> Array (fromJsonSpec x)
-        (JsonText "#TextMap" : x : []) -> TextMap (fromJsonSpec x)
-        (JsonText "#Refined" : x : _) -> Refined (fromJsonSpec x) undefined
-        (JsonText "#Or" : x : y : []) -> Or (fromJsonSpec x) (fromJsonSpec y) ()
-        _ ->
-            let (tol, xs') = partition (== JsonText "#Tolerant") xs
-                s = if (null tol) then Strict else Tolerant
-            in Tuple s (map fromJsonSpec xs')
-    JsonObject ps ->
-        let (tol, ps') = partition ((== JsonText "#Tolerant") . snd) ps
-            s = if (null tol) then Strict else Tolerant
-        in Object s [(k, fromJsonSpec v) | (k, v) <- ps']
+ppcm :: CSpec -> IO ()
+ppcm (Fix (Or a b c)) = pPrint c
+
+pp :: Show a => a -> IO ()
+pp = pPrint
 
 ---------------------------------------------------------------------
 -- * MatchResult

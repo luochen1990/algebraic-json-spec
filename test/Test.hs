@@ -25,6 +25,7 @@ import JsonSpec.Core.Generators
 import JsonSpec.Core.Serialize
 import JsonSpec.EDSL
 import JsonSpec.DSL
+import JsonSpec.AlgebraicAJS
 
 isRight :: Either a b -> Bool
 isRight e = either (const False) (const True) e
@@ -37,8 +38,13 @@ infixl 2 <?>
 
 main :: IO ()
 main = hspec $ do
-  describe "compareSortedListWith" $ do
-    prop "correct" $
+  describe "Arith" $ do
+    prop "plus-comm" $
+      \(x :: Int) (y :: Int) ->
+        collect (x == y) $ x + y === y + x
+
+  describe "Tools" $ do
+    prop "compareSortedListWith correct" $
       \(ori_xs :: [Int]) (ori_ys :: [Int]) ->
         let (xs, ys) = (sort ori_xs, sort ori_ys)
             (both, onlyL, onlyR) = compareSortedListWith id xs ys
@@ -48,27 +54,39 @@ main = hspec $ do
           (case (compareSortedListWith id onlyL onlyR) of (both', _, _) -> both' === []) .&&.
           (case (compareSortedListWith id bothL bothR) of (both', _, _) -> both' === both)
 
-  describe "arith" $ do
-    prop "plus-comm" $
-      \(x :: Int) (y :: Int) ->
-        collect (x == y) $ x + y === y + x
-
-  describe "JsonSpec" $ do
+  describe "JsonSpec.Core" $ do
     prop "example-matchSpec" $
       \(sp :: CSpec) ->
         let sh = toShape' sp
         in isDeterminateShape sh ==> matchSpec M.empty sp (example sh) === Matched
 
     prop "matchSpec-Or-commutative" $
-      \(sp1 :: CSpec) (sp2 :: CSpec) (d :: JsonData) ->
+      \(sp1 :: CSpec) (sp2 :: CSpec) ->
         let rst = (,) <$> checkOr M.empty sp1 sp2 <*> checkOr M.empty sp2 sp1
-        in isRight rst ==> case rst of Right (or1, or2) -> (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
+        in isRight rst ==> case rst of
+          Right (or1, or2) ->
+            \(d :: JsonData) ->
+              (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
+
+    prop "matchSpec-Or-associative" $
+      \(sp1 :: Spec) (sp2 :: Spec) (sp3 :: Spec) ->
+        let rst = (,) <$> checkSpec M.empty ((sp1 <|||> sp2) <|||> sp3) <*> checkSpec M.empty (sp1 <|||> (sp2 <|||> sp3))
+        in isRight rst ==> case rst of
+          Right (or1, or2) ->
+            \(d :: JsonData) ->
+              (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
 
     prop "checkSpec-Or-commutative" $
       \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
         let rst1 = checkSpec M.empty (sp1 <|||> sp2)
             rst2 = checkSpec M.empty (sp2 <|||> sp1)
-        in isRight rst1 === isRight rst2
+        in collect (isRight rst1) $ isRight rst1 === isRight rst2
+
+    prop "checkSpec-Or-associative" $
+      \(sp1 :: Spec) (sp2 :: Spec) (sp3 :: Spec) (d :: JsonData) ->
+        let rst1 = checkSpec M.empty ((sp1 <|||> sp2) <|||> sp3)
+            rst2 = checkSpec M.empty (sp1 <|||> (sp2 <|||> sp3))
+        in collect (isRight rst1) $ isRight rst1 === isRight rst2
 
     prop "checkSpec-overlapping-evidence-correct" $
       \(sp1 :: Spec) (sp2 :: Spec) ->
@@ -93,12 +111,6 @@ main = hspec $ do
                 d2 = JsonArray (ds ++ [JsonNull])
             in matchSpec' sp d1 == Matched ==> matchSpec' sp d2 === Matched <?> show (sp, d1, d2)
 
-    prop "arbitraryJ-generated-data-do-matchSpec" $
-      \(sp :: CSpec) ->
-        isDeterminateShape (toShape' sp) ==>
-          forAll (arbitraryJ sp) $ \d ->
-            matchSpec' sp d === Matched
-
     prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
       \(sp1 :: CSpec) ->
         let sh1 = toShape' sp1 in acceptNull sh1 && isDeterminateShape sh1 ==>
@@ -109,25 +121,40 @@ main = hspec $ do
                 forAll (arbitraryJ sp) $ \d ->
                   let sp' = (Fix $ Tuple Tolerant (sps ++ [sp1])) in matchSpec' sp' d === Matched <?> show sp'
 
-    prop "fromJsonSpec . toJsonSpec == identity" $
-      \(sp :: Spec) ->
-        toShape' (fromJsonSpec (toJsonSpec sp)) === toShape' sp
+  describe "JsonSpec.Core.Generators" $ do
+    prop "arbitraryJ-generated-data-do-matchSpec" $
+      \(sp :: CSpec) ->
+        isDeterminateShape (toShape' sp) ==>
+          forAll (arbitraryJ sp) $ \d ->
+            matchSpec' sp d === Matched
 
-    prop "deserialize . serialize == identity (for JsonData)" $
+  describe "JsonSpec.Serialize" $ do
+    prop "deserialize <> serialize == identity (for JsonData)" $
       \(d :: JsonData) ->
         either error id (runGetS deserialize (runPutS (serialize d))) === d
 
-    prop "deserializeJ . serializeJ == identity" $
+    prop "deserializeJ <> serializeJ == identity" $
       \(sp :: CSpec) ->
         isDeterminateShape (toShape' sp) ==>
           forAll (arbitraryJ sp) $ \d ->
             deserializeJ M.empty sp (serializeJ M.empty sp d) === d
 
+  describe "JsonSpec.DSL" $ do
     prop "parseSpec <> show == identity" $
       \(sp :: Spec) ->
         isDeterminateShape (toShape' sp) ==>
           show (parseSpec (show sp)) === show (Right sp :: Either String Spec)
 
+  describe "JsonSpec.AlgebraicAJS" $ do
+    prop "fromJson <> toJson == identity" $
+      \(sp :: Spec) ->
+        toShape' (fromJson (toJson sp)) === toShape' sp
+
+    prop "matchSpec aajs & toJson" $
+      \(sp :: Spec) ->
+        matchSpec aajs (aajs M.! "JsonSpec") (toJson sp) === Matched <?> show (toJson sp)
+
+  describe "examples" $
     it "works with some simple cases" $ do
       show (checkSpec env (number <|||> text)) `shouldBe` "Right (Number | Text)"
       show (checkSpec env ((number <|||> text) <|||> (ctext "abc"))) `shouldBe` "Left (ExistOverlappingOr Sure (Number | Text) \"abc\" \"abc\")"

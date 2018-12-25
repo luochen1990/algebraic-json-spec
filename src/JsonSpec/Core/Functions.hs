@@ -115,9 +115,11 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
     (Anything, t) -> Overlapping (sureness (Fix t)) (example (Fix t))
     (t, Anything) -> Overlapping (sureness (Fix t)) (example (Fix t))
     _ -> --NOTE: these trivial cases, depending on matchOutline, it's correctness is subtle.
-        if matchOutline tr2 (example shape1) then Overlapping Sure (example shape1)
-        else if matchOutline tr1 (example shape2) then Overlapping Sure (example shape2)
-        else NonOverlapping (ViaOutline tr1 tr2)
+        let ol1 = toOutline shape1
+            ol2 = toOutline shape2
+        in if matchOutline ol2 (example shape1) then Overlapping Sure (example shape1)
+            else if matchOutline ol1 (example shape2) then Overlapping Sure (example shape2)
+            else NonOverlapping (ViaOutline (S.singleton ol1) (S.singleton ol2))
 
 -- * trivial things used in shapeOverlap
 
@@ -170,7 +172,8 @@ joinLeftOrPath r1 r2 = case (r1, r2) of
     (_, Overlapping Sure d2) -> Overlapping Sure d2
     (Overlapping Unsure d1, _) -> Overlapping Unsure d1
     (_, Overlapping Unsure d2) -> Overlapping Unsure d2
-    (NonOverlapping c13, NonOverlapping c23) -> NonOverlapping (ViaOrL c13 c23)
+    (NonOverlapping (ViaOutline ols1 ols2), NonOverlapping (ViaOutline ols1' ols2')) | ols2 == ols2' -> NonOverlapping (ViaOutline (ols1 `S.union` ols1') ols2)
+    (NonOverlapping c13, NonOverlapping c23) -> NonOverlapping (if c13 == c23 then c13 else ViaOrL c13 c23)
 
 -- | for the case t1 | (t2 | t3), name (shapeOverlap t1 t2) as r1, (shapeOverlap t1 t3) as r2
 joinRightOrPath :: ShapeRelation -> ShapeRelation -> ShapeRelation
@@ -179,7 +182,8 @@ joinRightOrPath r1 r2 = case (r1, r2) of
     (_, Overlapping Sure d2) -> Overlapping Sure d2
     (Overlapping Unsure d1, _) -> Overlapping Unsure d1
     (_, Overlapping Unsure d2) -> Overlapping Unsure d2
-    (NonOverlapping c12, NonOverlapping c13) -> NonOverlapping (ViaOrR c12 c13)
+    (NonOverlapping (ViaOutline ols1 ols2), NonOverlapping (ViaOutline ols1' ols2')) | ols1 == ols1' -> NonOverlapping (ViaOutline ols1 (ols2 `S.union` ols2'))
+    (NonOverlapping c12, NonOverlapping c13) -> NonOverlapping (if c12 == c13 then c12 else ViaOrR c12 c13)
 
 -- * checkSpec & checkEnv
 
@@ -232,7 +236,7 @@ matchSpec env spec@(Fix t) d = let rec = matchSpec env in case (t, d) of
         MatchRight -> wrapMR OrNotMatchRight (rec t2 d)
         MatchNothing -> UnMatched (DirectCause (OrMatchNothing c) spec d)
     (Ref name, d) -> wrapMR (RefNotMatch name) (rec (env M.! name) d) -- NOTICE: can fail if name not in env
-    (t, d) -> if matchOutline t d then Matched else UnMatched (DirectCause OutlineNotMatch spec d)
+    (t, d) -> if matchOutline (toOutline spec) d then Matched else UnMatched (DirectCause OutlineNotMatch spec d)
 
 -- | match Spec and JsonData
 tryMatchSpec :: Env Spec -> Spec -> JsonData -> Either CheckFailedReason MatchResult
@@ -243,7 +247,7 @@ tryMatchSpec env sp d = ((,) <$> checkEnv env <*> checkSpec env sp) >>= (\(env',
 -- | a generic programming tool, similar to everywhereM in Haskell
 everywhereJ :: Monad m => Env CSpec -> CSpec -> Name -> (JsonData -> m JsonData) -> (JsonData -> m JsonData)
 everywhereJ env spec name g dat = rec spec dat where
-    rec (Fix tr) dat = case (tr, dat) of
+    rec spec@(Fix tr) dat = case (tr, dat) of
         (Tuple _ ts, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | (t, x) <- zip ts xs]) >>= g
         (Array t, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | x <- xs]) >>= g
         (Object _ ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k,) <$> rec t (lookupObj' k d) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
@@ -254,5 +258,5 @@ everywhereJ env spec name g dat = rec spec dat where
             MatchRight -> rec t2 d
             MatchNothing -> error "everywhereJ not used correctly (1)"
         (Ref name', d) -> let t = env M.! name in if name' == name then rec t d >>= g else rec t d
-        (t, d) -> if matchOutline t d then pure d else error "everywhereJ not used correctly (2)"
+        (t, d) -> if matchOutline (toOutline spec) d then pure d else error "everywhereJ not used correctly (2)"
 

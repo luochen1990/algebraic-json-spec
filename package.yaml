@@ -31,6 +31,8 @@ dependencies:
 - megaparsec
 - parser-combinators
 - raw-strings-qq
+- pretty-simple
+- text
 
 library:
   source-dirs: src
