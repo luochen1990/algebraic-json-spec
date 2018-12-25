@@ -33,7 +33,10 @@ pName :: Parser Name
 pName = some alphaNumChar
 
 pSpec :: Parser Spec
-pSpec = makeExprParser (try pSpec') [ [ InfixR (try (optional (try (space >> newline)) *> (toks "|?" <|> tok '|')) $> (<|||>)) ] ]
+pSpec = makeExprParser (try pSpec') [
+    [ Prefix (try (toks "Array") $> array) , Prefix (toks "TextMap" $> textmap)],
+    [ InfixR (try (optional (try (space >> newline)) *> (toks "|?" <|> tok '|')) $> (<|||>)) ]
+    ]
 
 pSpec' :: Parser Spec
 pSpec' = toks "Anything" $> Fix Anything
@@ -44,8 +47,6 @@ pSpec' = toks "Anything" $> Fix Anything
     <|> cboolean <$> pLitBoolean
     <|> cnumber <$> pLitNumber
     <|> ctext <$> pLitText
-    <|> array <$> (toks "Array" *> pSpec)
-    <|> textmap <$> (toks "TextMap" *> pSpec)
     <|> (do
         ts <- tok '[' *> pSpec `sepBy` tok ','
         star <- optional ((when (not (null ts)) (tok ',')) *> (tok '*'))
