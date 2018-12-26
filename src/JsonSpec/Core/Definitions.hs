@@ -13,6 +13,7 @@ import Data.Foldable (fold, foldMap)
 import Data.List
 import Data.Maybe
 import Data.Fix
+import Data.Fixed (mod')
 import Data.Text.Lazy (unpack)
 import Data.Char (isAlphaNum)
 import Text.MultilingualShow
@@ -247,7 +248,70 @@ type Env a = M.Map Name a
 -- ** DecProp
 
 -- | a decidable proposition about JsonData
-data DecProp = DecProp {testProp :: JsonData -> Bool}
+type DecProp = Expr
+
+data Expr
+    = It
+    | Dot Expr String
+    | Idx Expr Int
+    | Lit JsonData
+    | Ifx Expr BinOp Expr
+    | Pfx UnaOp Expr
+    deriving (Eq, Ord)
+
+data BinOp
+    = EqOp | NeOp | LtOp | GtOp | LeOp | GeOp
+    | AddOp | SubOp | MulOp | DivOp | ModOp
+    | AndOp | OrOp
+    deriving (Eq, Ord)
+
+data UnaOp
+    = LenOp | NotOp
+    deriving (Eq, Ord)
+
+evalExpr :: Expr -> JsonData -> JsonData
+evalExpr expr d = case expr of
+    It -> d
+    Dot e k -> case evalExpr e d of (JsonObject kvs) -> let mp = M.fromList kvs in mp M.! k
+    Idx e i -> case evalExpr e d of (JsonArray xs) -> xs !! i
+    Lit d' -> d'
+    Ifx e1 op e2 -> (evalBinOp op) (evalExpr e1 d) (evalExpr e2 d)
+    Pfx op e -> (evalUnaOp op) (evalExpr e d)
+    where
+        evalBinOp :: BinOp -> JsonData -> JsonData -> JsonData
+        evalBinOp op = case op of
+            EqOp -> \x y -> JsonBoolean (x == y)
+            NeOp -> \x y -> JsonBoolean (x /= y)
+            LtOp -> \x y -> JsonBoolean (x < y)
+            GtOp -> \x y -> JsonBoolean (x > y)
+            LeOp -> \x y -> JsonBoolean (x <= y)
+            GeOp -> \x y -> JsonBoolean (x >= y)
+            AddOp -> \(JsonNumber x) (JsonNumber y) -> JsonNumber (x + y)
+            SubOp -> \(JsonNumber x) (JsonNumber y) -> JsonNumber (x - y)
+            MulOp -> \(JsonNumber x) (JsonNumber y) -> JsonNumber (x * y)
+            DivOp -> \(JsonNumber x) (JsonNumber y) -> JsonNumber (x / y)
+            ModOp -> \(JsonNumber x) (JsonNumber y) -> JsonNumber (x `mod'` y)
+            AndOp -> \(JsonBoolean x) (JsonBoolean y) -> JsonBoolean (x && y)
+            OrOp -> \(JsonBoolean x) (JsonBoolean y) -> JsonBoolean (x || y)
+        evalUnaOp :: UnaOp -> JsonData -> JsonData
+        evalUnaOp op = case op of
+            LenOp -> \d -> case d of
+                (JsonObject kvs) -> JsonNumber (fromIntegral $ length kvs)
+                (JsonArray xs) -> JsonNumber (fromIntegral $ length xs)
+                (JsonText s) -> JsonNumber (fromIntegral $ length s)
+            NotOp -> \(JsonBoolean x) -> JsonBoolean (not x)
+
+testProp :: DecProp -> JsonData -> Bool
+testProp p d = case evalExpr p d of JsonBoolean True -> True; _ -> False
+
+injectExpr :: Expr -> Expr -> Expr
+injectExpr it' expr = case expr of
+    It -> it'
+    Dot e k -> Dot (injectExpr it' e) k
+    Idx e i -> Idx (injectExpr it' e) i
+    Lit d -> Lit d
+    Ifx e1 op e2 -> Ifx (injectExpr it' e1) op (injectExpr it' e2)
+    Pfx op e -> Pfx op (injectExpr it' e)
 
 -- ** ChoiceMaker
 

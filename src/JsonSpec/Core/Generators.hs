@@ -65,8 +65,30 @@ instance CoArbitrary JsonData where
 instance Arbitrary Strictness where
   arbitrary = elements [Strict, Tolerant]
 
-instance Arbitrary DecProp where
-  arbitrary = DecProp <$> arbitrary
+arbPropAbout :: Spec -> Gen DecProp
+arbPropAbout spec = sized (arb' spec) where
+  arb' (Fix tr) n | n >= 0 = case tr of
+    Anything -> elements [(Lit (JsonBoolean True)), (Ifx It NeOp (Lit JsonNull))]
+    Number -> pure (Ifx It LtOp (Lit (JsonNumber 42)))
+    Text -> pure (Ifx (Pfx LenOp It) LtOp (Lit (JsonNumber 42)))
+    Boolean -> elements [(Lit (JsonBoolean True)), (Ifx It NeOp (Lit (JsonBoolean True))), (Ifx It NeOp (Lit (JsonBoolean False)))]
+    Null -> pure (Lit (JsonBoolean True))
+    ConstNumber m -> pure (Lit (JsonBoolean True))
+    ConstText s -> pure (Lit (JsonBoolean True))
+    ConstBoolean b -> pure (Lit (JsonBoolean True))
+    Tuple _ ts -> if null ts then pure (Lit (JsonBoolean True)) else do
+      (i, t) <- elements (zip [0..] ts)
+      p <- arb' t (max 0 (n-1))
+      pure (injectExpr (Idx It i) p)
+    Array t -> pure (Ifx (Pfx LenOp It) LtOp (Lit (JsonNumber 42)))
+    Object _ ps -> if null ps then pure (Lit (JsonBoolean True)) else do
+      (k, t) <- elements ps
+      p <- arb' t (max 0 (n-1))
+      pure (injectExpr (Dot It k) p)
+    TextMap t -> pure (Ifx (Pfx LenOp It) LtOp (Lit (JsonNumber 42)))
+    Refined t _ -> arb' t (max 0 (n-1))
+    Ref name -> pure (Lit (JsonBoolean True))
+    Or t1 t2 _ -> pure (Lit (JsonBoolean True)) -- oneof [arb' t1 ((max 0 (n-1))`div`2), arb' t2 ((max 0 (n-1))`div`2)]
 
 instance Arbitrary Spec where
   arbitrary = sized tree' where
@@ -79,7 +101,11 @@ instance Arbitrary Spec where
       Fix <$> (Array <$> (tree' (n-1))),
       Fix <$> (Object <$> arbitrary <*> (arbNat >>= \m -> arbMap m arbKey (tree' ((n-1) `div` m)))),
       Fix <$> (TextMap <$> (tree' (n-1))),
-      Fix <$> (arbNatSized (n-1) >>= \k -> (Refined <$> (tree' (n-1-k)) <*> resize k arbitrary)),
+      Fix <$> (do
+        k <- arbNatSized (n-1)
+        sp <- tree' (n-1-k)
+        p <- resize k (arbPropAbout sp)
+        pure (Refined sp p)),
       Fix <$> (Or <$> tree' ((n-1) `div` 2) <*> tree' ((n-1) `div` 2) <*> pure ())]
   shrink (Fix tr) = case tr of
     Tuple s ts -> Fix Null : ts ++ [Fix $ Tuple s ts' | ts' <- shrinkList shrink ts] ++ [Fix $ Tuple Strict ts | s == Tolerant]

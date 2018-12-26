@@ -36,8 +36,8 @@ ctext s = Fix (ConstText s)
 ref :: Name -> Spec
 ref s = Fix (Ref s)
 
-refined :: Spec -> (JsonData -> Bool) -> Spec
-refined sp prop = Fix (Refined sp (DecProp prop))
+refined :: Spec -> DecProp -> Spec
+refined sp prop = Fix (Refined sp prop)
 
 -- | infix constructor of an Or node
 (<|||>) :: Spec -> Spec -> Spec

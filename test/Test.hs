@@ -173,7 +173,7 @@ main = hspec $ do
       show (tryMatchSpec env spec4 data4) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\")))))"
       show (tryMatchSpec M.empty (tuple' [number, cnull]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
       show (tryMatchSpec M.empty (tuple' [number, cnull] <|||> tuple [cnumber 1, cnumber 1]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
-      show (checkSpec M.empty (tuple' [refined cnull (const False)] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure [(Refined Null), *] [] [])"
+      show (checkSpec M.empty (tuple' [refined cnull (Lit (JsonBoolean False))] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure [(Refined Null), *] [] [])"
 
 -- test data
 
