@@ -65,6 +65,9 @@ instance CoArbitrary JsonData where
 instance Arbitrary Strictness where
   arbitrary = elements [Strict, Tolerant]
 
+-- | generate DecProp along a Spec,
+--   the generated DecProp p satisfy `exists (d : JsonData), testProp p d == True`,
+--   so that arbitraryJ can generate a value for Refined node successfully.
 arbPropAbout :: Spec -> Gen DecProp
 arbPropAbout spec = sized (arb' spec) where
   arb' (Fix tr) n | n >= 0 = case tr of
@@ -88,7 +91,7 @@ arbPropAbout spec = sized (arb' spec) where
     TextMap t -> pure (Ifx (Pfx LenOp It) LtOp (Lit (JsonNumber 42)))
     Refined t _ -> arb' t (max 0 (n-1))
     Ref name -> pure (Lit (JsonBoolean True))
-    Or t1 t2 _ -> pure (Lit (JsonBoolean True)) -- oneof [arb' t1 ((max 0 (n-1))`div`2), arb' t2 ((max 0 (n-1))`div`2)]
+    Or t1 t2 _ -> pure (Lit (JsonBoolean True))
 
 instance Arbitrary Spec where
   arbitrary = sized tree' where
