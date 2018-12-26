@@ -148,7 +148,7 @@ main = hspec $ do
   describe "JsonSpec.AlgebraicAJS" $ do
     prop "fromJson <> toJson == identity" $
       \(sp :: Spec) ->
-        toShape' (fromJson (toJson sp)) === toShape' sp
+        toShape' (fromJson (toJson sp) :: Spec) === toShape' sp
 
     prop "matchSpec aajs & toJson" $
       \(sp :: Spec) ->
