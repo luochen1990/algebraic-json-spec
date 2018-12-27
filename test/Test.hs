@@ -54,126 +54,152 @@ main = hspec $ do
           (case (compareSortedListWith id onlyL onlyR) of (both', _, _) -> both' === []) .&&.
           (case (compareSortedListWith id bothL bothR) of (both', _, _) -> both' === both)
 
-  describe "JsonSpec.Core" $ do
-    prop "example-matchSpec" $
-      \(sp :: CSpec) ->
-        let sh = toShape' sp
-        in isDeterminateShape sh ==> matchSpec M.empty sp (example sh) === Matched
+  describe "JsonSpec" $ do
+    describe "examples" test_simple_examples
 
-    prop "matchSpec-Or-commutative" $
-      \(sp1 :: CSpec) (sp2 :: CSpec) ->
-        let rst = (,) <$> checkOr M.empty sp1 sp2 <*> checkOr M.empty sp2 sp1
-        in isRight rst ==> case rst of
-          Right (or1, or2) ->
-            \(d :: JsonData) ->
-              (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
+    describe "Core" $ do
+      prop "example-matchSpec" $
+        \(sp :: CSpec) ->
+          let sh = toShape' sp
+          in isDeterminateShape sh ==> matchSpec M.empty sp (example sh) === Matched
 
-    prop "matchSpec-Or-associative" $
-      \(sp1 :: Spec) (sp2 :: Spec) (sp3 :: Spec) ->
-        let rst = (,) <$> checkSpec M.empty ((sp1 <|||> sp2) <|||> sp3) <*> checkSpec M.empty (sp1 <|||> (sp2 <|||> sp3))
-        in isRight rst ==> case rst of
-          Right (or1, or2) ->
-            \(d :: JsonData) ->
-              (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
+      prop "matchSpec-Or-commutative" $
+        \(sp1 :: CSpec) (sp2 :: CSpec) ->
+          let rst = (,) <$> checkOr M.empty sp1 sp2 <*> checkOr M.empty sp2 sp1
+          in isRight rst ==> case rst of
+            Right (or1, or2) ->
+              \(d :: JsonData) ->
+                (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
 
-    prop "checkSpec-Or-commutative" $
-      \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
-        let rst1 = checkSpec M.empty (sp1 <|||> sp2)
-            rst2 = checkSpec M.empty (sp2 <|||> sp1)
-        in collect (isRight rst1) $ isRight rst1 === isRight rst2
+      prop "matchSpec-Or-associative" $
+        \(sp1 :: Spec) (sp2 :: Spec) (sp3 :: Spec) ->
+          let rst = (,) <$> checkSpec M.empty ((sp1 <|||> sp2) <|||> sp3) <*> checkSpec M.empty (sp1 <|||> (sp2 <|||> sp3))
+          in isRight rst ==> case rst of
+            Right (or1, or2) ->
+              \(d :: JsonData) ->
+                (let r1 = matchSpec' or1 d; r2 = matchSpec' or2 d in collect (r1 == Matched) $ r1 === r2)
 
-    prop "checkSpec-Or-associative" $
-      \(sp1 :: Spec) (sp2 :: Spec) (sp3 :: Spec) (d :: JsonData) ->
-        let rst1 = checkSpec M.empty ((sp1 <|||> sp2) <|||> sp3)
-            rst2 = checkSpec M.empty (sp1 <|||> (sp2 <|||> sp3))
-        in collect (isRight rst1) $ isRight rst1 === isRight rst2
+      prop "checkSpec-Or-commutative" $
+        \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
+          let rst1 = checkSpec M.empty (sp1 <|||> sp2)
+              rst2 = checkSpec M.empty (sp2 <|||> sp1)
+          in collect (isRight rst1) $ isRight rst1 === isRight rst2
 
-    prop "checkSpec-overlapping-evidence-correct" $
-      \(sp1 :: Spec) (sp2 :: Spec) ->
-        let rst = checkSpec M.empty (sp1 <|||> sp2)
-        in not (isRight rst) ==> case rst of
-          Left (ExistOverlappingOr Sure sp1' sp2' evi) ->
-            (matchSpec' sp1' evi === Matched .&&. matchSpec' sp2' evi === Matched) <?> show (sp1', sp2', evi)
-          _ -> label "not Overlapping Sure" True
+      prop "checkSpec-Or-associative" $
+        \(sp1 :: Spec) (sp2 :: Spec) (sp3 :: Spec) (d :: JsonData) ->
+          let rst1 = checkSpec M.empty ((sp1 <|||> sp2) <|||> sp3)
+              rst2 = checkSpec M.empty (sp1 <|||> (sp2 <|||> sp3))
+          in collect (isRight rst1) $ isRight rst1 === isRight rst2
 
-    prop "matchSpec- Or a b >= a" $
-      \(sp1 :: Spec) (sp2 :: Spec) (d :: JsonData) ->
-        let rst = checkSpec M.empty (sp1 <|||> sp2)
-        in isRight rst ==> case rst of
-          Right or1@(Fix (Or sp1' sp2' _)) -> matchSpec' sp1' d == Matched ==> matchSpec' or1 d === Matched
+      prop "checkSpec-overlapping-evidence-correct" $
+        \(sp1 :: Spec) (sp2 :: Spec) ->
+          let rst = checkSpec M.empty (sp1 <|||> sp2)
+          in not (isRight rst) ==> case rst of
+            Left (ExistOverlappingOr Sure sp1' sp2' evi) ->
+              (matchSpec' sp1' evi === Matched .&&. matchSpec' sp2' evi === Matched) <?> show (sp1', sp2', evi)
+            _ -> label "not Overlapping Sure" True
 
-    prop "matchSpec-Tolerant-Tuple-accept-redurant-null" $
-      \(sps :: [Spec]) (ds :: [JsonData]) ->
-        let rst = checkSpec M.empty (Fix $ Tuple Tolerant sps)
-        in isRight rst ==> case rst of
-          Right sp ->
-            let d1 = JsonArray ds
-                d2 = JsonArray (ds ++ [JsonNull])
-            in matchSpec' sp d1 == Matched ==> matchSpec' sp d2 === Matched <?> show (sp, d1, d2)
+      prop "matchSpec- Or a b >= a" $
+        \(sp1 :: Spec) (sp2 :: Spec) ->
+          let rst = checkSpec M.empty (sp1 <|||> sp2)
+          in isRight rst ==> case rst of
+            Right or1@(Fix (Or sp1' sp2' _)) ->
+               \(d :: JsonData) -> matchSpec' sp1' d == Matched ==> matchSpec' or1 d === Matched
 
-    prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
-      \(sp1 :: CSpec) ->
-        let sh1 = toShape' sp1 in acceptNull sh1 && isDeterminateShape sh1 ==>
-          forAll arbNat $ \n ->
-            forAll (vectorOf n arbitrary) $ \sps ->
-              let sp = (Fix $ Tuple Strict sps)
-              in isDeterminateShape (toShape' sp) ==>
-                forAll (arbitraryJ sp) $ \d ->
-                  let sp' = (Fix $ Tuple Tolerant (sps ++ [sp1])) in matchSpec' sp' d === Matched <?> show sp'
+      prop "matchSpec-Tolerant-Tuple-accept-redurant-null" $
+        \(sps :: [CSpec]) (ds :: [JsonData]) ->
+          let sp = (Fix $ Tuple Tolerant sps)
+              d1 = JsonArray ds
+              d2 = JsonArray (ds ++ [JsonNull])
+          in matchSpec' sp d1 == Matched ==> matchSpec' sp d2 === Matched <?> show (sp, d1, d2)
 
-  describe "JsonSpec.Core.Generators" $ do
-    prop "arbitraryJ-generated-data-do-matchSpec" $
-      \(sp :: CSpec) ->
-        isDeterminateShape (toShape' sp) ==>
-          forAll (arbitraryJ sp) $ \d ->
-            matchSpec' sp d === Matched
+      prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
+        \(sp1 :: CSpec) ->
+          let sh1 = toShape' sp1 in acceptNull sh1 && isDeterminateShape sh1 ==>
+            forAll (arbNatSized 10) $ \n ->
+              forAll (vectorOf n (arbitrary `suchThat` (isDeterminateShape . toShape'))) $ \sps ->
+                let sp = (Fix $ Tuple Strict sps)
+                    sp' = (Fix $ Tuple Tolerant (sps ++ [sp1]))
+                in
+                  forAll (arbitraryJ sp) $ \d ->
+                    matchSpec' sp' d === Matched <?> show sp'
 
-  describe "JsonSpec.Serialize" $ do
-    prop "deserialize <> serialize == identity (for JsonData)" $
-      \(d :: JsonData) ->
-        either error id (runGetS deserialize (runPutS (serialize d))) === d
+    describe "Core.Generators" $ do
+      prop "arbitraryJ-generated-data-do-matchSpec" $
+        \(sp :: CSpec) ->
+          isDeterminateShape (toShape' sp) ==>
+            forAll (arbitraryJ sp) $ \d ->
+              matchSpec' sp d === Matched
 
-    prop "deserializeJ <> serializeJ == identity" $
-      \(sp :: CSpec) ->
-        isDeterminateShape (toShape' sp) ==>
-          forAll (arbitraryJ sp) $ \d ->
-            deserializeJ M.empty sp (serializeJ M.empty sp d) === d
+    describe "Serialize" $ do
+      prop "deserialize <> serialize == identity (for JsonData)" $
+        \(d :: JsonData) ->
+          either error id (runGetS deserialize (runPutS (serialize d))) === d
 
-  describe "JsonSpec.DSL" $ do
-    prop "parseSpec <> show == identity" $
-      \(sp :: Spec) ->
-        isDeterminateShape (toShape' sp) ==>
-          show (parseSpec (show sp)) === show (Right sp :: Either String Spec)
+      prop "deserializeJ <> serializeJ == identity" $
+        \(sp :: CSpec) ->
+          isDeterminateShape (toShape' sp) ==>
+            forAll (arbitraryJ sp) $ \d ->
+              deserializeJ M.empty sp (serializeJ M.empty sp d) === d
 
-  describe "JsonSpec.AlgebraicAJS" $ do
-    prop "fromJson <> toJson == identity" $
-      \(sp :: Spec) ->
-        toShape' (fromJson (toJson sp) :: Spec) === toShape' sp
+    describe "DSL" $ do
+      prop "parseSpec <> show == identity" $
+        \(sp :: Spec) ->
+          isDeterminateShape (toShape' sp) ==>
+            show (parseSpec (show sp)) === show (Right sp :: Either String Spec)
 
-    prop "matchSpec aajs & toJson" $
-      \(sp :: Spec) ->
-        matchSpec aajs (aajs M.! "JsonSpec") (toJson sp) === Matched <?> show (toJson sp)
+    describe "AlgebraicAJS" $ do
+      prop "fromJson <> toJson == identity" $
+        \(sp :: Spec) ->
+          toShape' (fromJson (toJson sp) :: Spec) === toShape' sp
 
-  describe "examples" $
-    it "works with some simple cases" $ do
-      show (checkSpec env (number <|||> text)) `shouldBe` "Right (Number | Text)"
-      show (checkSpec env ((number <|||> text) <|||> (ctext "abc"))) `shouldBe` "Left (ExistOverlappingOr Sure (Number | Text) \"abc\" \"abc\")"
-      show (checkSpec env ((number <|||> text) <|||> case1)) `shouldBe` "Right ((Number | Text) | [\"Lit\", Number])"
-      show (checkSpec env ((number <|||> text) <|||> case2)) `shouldBe` "Right ((Number | Text) | [\"Add\", AST, AST])"
-      show (checkSpec env ((number <|||> text) <|||> ast)) `shouldBe` "Right ((Number | Text) | ([\"Lit\", Number] | [\"Add\", AST, AST]))"
-      show (checkSpec env ((number <|||> text) <|||> case1')) `shouldBe` "Right ((Number | Text) | [\"Lit\", 1.0])"
-      show (checkSpec env ((number <|||> text) <|||> (case1 <|||> case1'))) `shouldBe` "Left (ExistOverlappingOr Sure [\"Lit\", Number] [\"Lit\", 1.0] [\"Lit\", 1.0])"
-      show (toShape 1 env ast) `shouldBe` "([\"Lit\", Number] |? [\"Add\", ([\"Lit\", Number] |? [\"Add\", $, $]), ([\"Lit\", Number] |? [\"Add\", $, $])])"
-      show (checkSpec env (spec1 <|||> spec2)) `shouldBe` "Right ({x: Number, y: Number, *} | {z: Number, x: Text, *})"
-      show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
-      show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
-      show (tryMatchSpec env ast dat1) `shouldBe` "Right Matched"
-      show (tryMatchSpec env ast dat2) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (TupleFieldNotMatch 1) (DirectCause OutlineNotMatch Number \"1\"))))"
-      show (tryMatchSpec env spec3 data3) `shouldBe` "Right (UnMatched (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\"))))"
-      show (tryMatchSpec env spec4 data4) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\")))))"
-      show (tryMatchSpec M.empty (tuple' [number, cnull]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
-      show (tryMatchSpec M.empty (tuple' [number, cnull] <|||> tuple [cnumber 1, cnumber 1]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
-      show (checkSpec M.empty (tuple' [refined cnull (Lit (JsonBoolean False))] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure [(Refined Null), *] [] [])"
+      prop "matchSpec aajs & toJson" $
+        \(sp :: Spec) ->
+          matchSpec aajs (aajs M.! "JsonSpec") (toJson sp) === Matched <?> show (toJson sp)
+
+    describe "** statistics **" $ do
+      prop "check ratio" $
+        \(sp :: Spec) ->
+          collect (isRight $ checkSpec M.empty sp) True
+
+      prop "match ratio" $
+        \(sp :: CSpec) (d :: JsonData) ->
+          collect (matchSpec' sp d == Matched) True
+
+      prop "isDeterminateShape" $
+        \(sp :: CSpec) ->
+          collect (isDeterminateShape (toShape' sp)) True
+
+      prop "acceptNull" $
+        \(sp :: CSpec) ->
+          collect (acceptNull (toShape' sp)) True
+
+      prop "isDeterminateShape && acceptNull" $
+        \(sp :: CSpec) ->
+          collect (let sh = toShape' sp in acceptNull sh && isDeterminateShape sh) True
+
+-- simple examples
+
+test_simple_examples = do
+  it "works with some simple cases" $ do
+    show (checkSpec env (number <|||> text)) `shouldBe` "Right (Number | Text)"
+    show (checkSpec env ((number <|||> text) <|||> (ctext "abc"))) `shouldBe` "Left (ExistOverlappingOr Sure (Number | Text) \"abc\" \"abc\")"
+    show (checkSpec env ((number <|||> text) <|||> case1)) `shouldBe` "Right ((Number | Text) | [\"Lit\", Number])"
+    show (checkSpec env ((number <|||> text) <|||> case2)) `shouldBe` "Right ((Number | Text) | [\"Add\", AST, AST])"
+    show (checkSpec env ((number <|||> text) <|||> ast)) `shouldBe` "Right ((Number | Text) | ([\"Lit\", Number] | [\"Add\", AST, AST]))"
+    show (checkSpec env ((number <|||> text) <|||> case1')) `shouldBe` "Right ((Number | Text) | [\"Lit\", 1.0])"
+    show (checkSpec env ((number <|||> text) <|||> (case1 <|||> case1'))) `shouldBe` "Left (ExistOverlappingOr Sure [\"Lit\", Number] [\"Lit\", 1.0] [\"Lit\", 1.0])"
+    show (toShape 1 env ast) `shouldBe` "([\"Lit\", Number] |? [\"Add\", ([\"Lit\", Number] |? [\"Add\", $, $]), ([\"Lit\", Number] |? [\"Add\", $, $])])"
+    show (checkSpec env (spec1 <|||> spec2)) `shouldBe` "Right ({x: Number, y: Number, *} | {z: Number, x: Text, *})"
+    show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
+    show (checkSpec env (spec1 <|||> spec2')) `shouldBe` "Left (ExistOverlappingOr Sure {x: Number, y: Number, *} {z: Number, x: Number, *} {x: 0.0, y: 0.0, z: 0.0})"
+    show (tryMatchSpec env ast dat1) `shouldBe` "Right Matched"
+    show (tryMatchSpec env ast dat2) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (TupleFieldNotMatch 1) (DirectCause OutlineNotMatch Number \"1\"))))"
+    show (tryMatchSpec env spec3 data3) `shouldBe` "Right (UnMatched (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\"))))"
+    show (tryMatchSpec env spec4 data4) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\")))))"
+    show (tryMatchSpec M.empty (tuple' [number, cnull]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
+    show (tryMatchSpec M.empty (tuple' [number, cnull] <|||> tuple [cnumber 1, cnumber 1]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
+    show (checkSpec M.empty (tuple' [refined cnull (Lit (JsonBoolean False))] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure [(Refined Null), *] [] [])"
 
 -- test data
 
