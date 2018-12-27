@@ -57,6 +57,13 @@ main = hspec $ do
   describe "JsonSpec" $ do
     describe "examples" test_simple_examples
 
+    describe "Core.Generators" $ do
+      prop "arbitraryJ-generated-data-do-matchSpec" $
+        \(sp :: CSpec) ->
+          -- trace (show sp) $
+          forAll (arbitraryJ sp) $ \d ->
+            matchSpec' sp d === Matched
+
     describe "Core" $ do
       prop "example-matchSpec" $
         \(sp :: CSpec) ->
@@ -92,44 +99,36 @@ main = hspec $ do
           in collect (isRight rst1) $ isRight rst1 === isRight rst2
 
       prop "checkSpec-overlapping-evidence-correct" $
-        \(sp1 :: Spec) (sp2 :: Spec) ->
-          let rst = checkSpec M.empty (sp1 <|||> sp2)
+        \(sp1 :: CSpec) (sp2 :: CSpec) ->
+          let rst = checkOr M.empty sp1 sp2
           in not (isRight rst) ==> case rst of
             Left (ExistOverlappingOr Sure sp1' sp2' evi) ->
               (matchSpec' sp1' evi === Matched .&&. matchSpec' sp2' evi === Matched) <?> show (sp1', sp2', evi)
             _ -> label "not Overlapping Sure" True
 
-      prop "matchSpec- Or a b >= a" $
-        \(sp1 :: Spec) (sp2 :: Spec) ->
-          let rst = checkSpec M.empty (sp1 <|||> sp2)
+      prop "matchSpec-Or-accept-more (a | b >= a)" $
+        \(sp1 :: CSpec) (sp2 :: CSpec) ->
+          let rst = checkOr M.empty sp1 sp2
           in isRight rst ==> case rst of
             Right or1@(Fix (Or sp1' sp2' _)) ->
-               \(d :: JsonData) -> matchSpec' sp1' d == Matched ==> matchSpec' or1 d === Matched
+              \(d :: JsonData) ->
+                matchSpec' sp1' d == Matched || matchSpec' sp2' d == Matched ==>
+                  matchSpec' or1 d === Matched <?> show (matchSpec' sp1' d, matchSpec' sp2' d)
 
       prop "matchSpec-Tolerant-Tuple-accept-redurant-null" $
-        \(sps :: [CSpec]) (ds :: [JsonData]) ->
+        \(sps :: [CSpec]) ->
           let sp = (Fix $ Tuple Tolerant sps)
-              d1 = JsonArray ds
-              d2 = JsonArray (ds ++ [JsonNull])
-          in matchSpec' sp d1 == Matched ==> matchSpec' sp d2 === Matched <?> show (sp, d1, d2)
+          in forAll (arbitraryJ sp) $ \d1 ->
+            let d2 = (case d1 of (JsonArray ds) -> JsonArray (ds ++ [JsonNull]))
+            in matchSpec' sp d2 === Matched <?> show (sp, d1, d2)
 
       prop "matchSpec-Tolerant-Tuple-accept-lacking-null" $
-        \(sp1 :: CSpec) ->
-          let sh1 = toShape' sp1 in acceptNull sh1 && isDeterminateShape sh1 ==>
-            forAll (arbNatSized 10) $ \n ->
-              forAll (vectorOf n (arbitrary `suchThat` (isDeterminateShape . toShape'))) $ \sps ->
-                let sp = (Fix $ Tuple Strict sps)
-                    sp' = (Fix $ Tuple Tolerant (sps ++ [sp1]))
-                in
-                  forAll (arbitraryJ sp) $ \d ->
-                    matchSpec' sp' d === Matched <?> show sp'
-
-    describe "Core.Generators" $ do
-      prop "arbitraryJ-generated-data-do-matchSpec" $
-        \(sp :: CSpec) ->
-          isDeterminateShape (toShape' sp) ==>
-            forAll (arbitraryJ sp) $ \d ->
-              matchSpec' sp d === Matched
+        \(sps :: [CSpec]) ->
+            let sp = (Fix $ Tuple Strict sps)
+                sp' = (Fix $ Tuple Tolerant (sps ++ [Fix Null]))
+            in
+              forAll (arbitraryJ sp) $ \d ->
+                matchSpec' sp' d === Matched <?> show sp'
 
     describe "Serialize" $ do
       prop "deserialize <> serialize == identity (for JsonData)" $
