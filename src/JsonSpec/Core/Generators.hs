@@ -13,7 +13,7 @@ import Data.Fix
 import Data.Maybe (mapMaybe)
 import Test.QuickCheck
 import JsonSpec.Core.Definitions
-import JsonSpec.Core.Functions (checkSpec)
+import JsonSpec.Core.Functions
 
 arbKey, arbKey' :: Gen String
 arbKey = elements ["a", "b", "c", "d", "e"]
@@ -89,7 +89,7 @@ arbPropAbout spec = sized (arb' spec) where
       p <- arb' t (max 0 (n-1))
       pure (injectExpr (Dot It k) p)
     TextMap t -> pure (Ifx (Pfx LenOp It) LtOp (Lit (JsonNumber 42)))
-    Refined t _ -> arb' t (max 0 (n-1))
+    Refined t _ -> pure (Lit (JsonBoolean True))
     Ref name -> pure (Lit (JsonBoolean True))
     Or t1 t2 _ -> pure (Lit (JsonBoolean True))
 
@@ -115,7 +115,7 @@ instance Arbitrary Spec where
     Array t -> Fix Null : t : [Fix $ Array t' | t' <- shrink t]
     Object s ps -> Fix Null : map snd ps ++ [Fix $ Object s ps' | ps' <- shrinkList shrinkSnd ps] ++ [Fix $ Object Strict ps | s == Tolerant]
     TextMap t -> Fix Null : t : [Fix $ TextMap t' | t' <- shrink t]
-    Refined t p -> Fix Null : t : [Fix $ Refined t' p | t' <- shrink t]
+    Refined t p -> Fix Null : t : [Fix $ Refined t' (Lit (JsonBoolean True)) | t' <- [t | p /= (Lit (JsonBoolean True))] ++ shrink t]
     Or t1 t2 _ -> Fix Null : [t1, t2] ++ [Fix $ Or t1' t2' () | (t1', t2') <- shrink (t1, t2)]
     ConstNumber x -> Fix Null : [Fix $ ConstNumber 1 | x /= 1]
     ConstText s -> Fix Null : [Fix $ ConstText "a" | s /= "a"]
@@ -142,14 +142,14 @@ arbitraryJ spec@(Fix tr) = sized (tree' tr) where
     ConstBoolean b -> pure $ JsonBoolean b
     Tuple Strict ts -> let m = length ts in JsonArray <$> sequence (map (\(Fix t) -> tree' t (max 0 (n-m-1) `div` m)) ts)
     Tuple Tolerant ts ->
-      let ts' = (reverse . dropWhile (acceptNull . toShape') . reverse) ts; (l, l') = (length ts, length ts')
-      in arbNatSized (l - l' + 1) >>= \m ->
-        let ts'' = take (l' + m) (ts ++ repeat (Fix Anything)) in tree' (Tuple Strict ts'') (max 0 (n-1))
+      let ts' = (reverse . dropWhile (\t -> matchSpec M.empty t JsonNull == Matched) . reverse) ts; (l, l') = (length ts, length ts')
+      in elements (nub [l, l', l'+1, l+1]) >>= \m ->
+        let ts'' = take m (ts ++ repeat (Fix Anything)) in tree' (Tuple Strict ts'') (max 0 (n-1))
     Array (Fix t) -> arbNatSized (min 3 n) >>= \m -> JsonArray <$> vectorOf m (tree' t (max 0 (n-m-1) `div` m))
     Object Strict ps -> let m = length ps in JsonObject <$> sequence [(k,) <$> tree' t (max 0 (n-m-1) `div` m) | (k, (Fix t)) <- ps]
     Object Tolerant ps -> sequence [arbNatSized (min 1 n), arbNatSized 1] >>= \[n1, n2] ->
       arbMap n1 arbKey' (pure $ Fix Anything) >>= \ps1_ ->
-        let (ps2, ps1) = partition (acceptNull . toShape' . snd) ps
+        let (ps2, ps1) = partition (\(_, t) -> matchSpec M.empty t JsonNull == Matched) ps
             ps1' = ps1 ++ ps1_
             ps2' = drop n2 ps2
         in tree' (Object Strict (ps1' ++ ps2')) (max 0 (n-1-n1))
