@@ -272,8 +272,8 @@ data UnaOp
 evalExpr :: Expr -> JsonData -> JsonData
 evalExpr expr d = case expr of
     It -> d
-    Dot e k -> case evalExpr e d of (JsonObject kvs) -> let mp = M.fromList kvs in mp M.! k
-    Idx e i -> case evalExpr e d of (JsonArray xs) -> xs !! i
+    Dot e k -> case evalExpr e d of d@(JsonObject kvs) -> lookupObj' k d
+    Idx e i -> case evalExpr e d of (JsonArray xs) -> maybe JsonNull id (xs `atMay` i)
     Lit d' -> d'
     Ifx e1 op e2 -> (evalBinOp op) (evalExpr e1 d) (evalExpr e2 d)
     Pfx op e -> (evalUnaOp op) (evalExpr e d)

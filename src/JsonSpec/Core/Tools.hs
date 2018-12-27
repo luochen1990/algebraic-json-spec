@@ -6,6 +6,12 @@ module JsonSpec.Core.Tools where
 import Data.Char
 import qualified Data.Set as S
 
+atMay :: [a] -> Int -> Maybe a
+atMay [] _ = Nothing
+atMay _ i | i < 0 = Nothing
+atMay (x:xs) 0 = Just x
+atMay (x:xs) i = atMay xs (i-1)
+
 compareSortedListWith :: Ord b => (a -> b) -> [a] -> [a] -> ([(a, a)], [a], [a])
 compareSortedListWith key xs ys = iter xs ys [] [] [] where
     iter xs ys both onlyXs onlyYs = case (xs, ys) of
