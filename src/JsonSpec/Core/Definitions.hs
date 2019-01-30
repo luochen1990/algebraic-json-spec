@@ -185,7 +185,7 @@ data Strictness
     | Tolerant -- ^ a tolerant Tuple or Object accept redurant part, and treat not present part as null
     deriving (Show, Eq, Ord)
 
-instance (ShowRef r, ShowOr c, Show tr') => Show (TyRep r p c tr') where
+instance (ShowRef r, Show p, ShowOr c, Show tr') => Show (TyRep r p c tr') where
     show tr = case tr of
         Anything -> "Anything"
         Number -> "Number"
@@ -202,11 +202,11 @@ instance (ShowRef r, ShowOr c, Show tr') => Show (TyRep r p c tr') where
         Object Tolerant ps -> "{" ++ intercalate ", " ([showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ ["*"]) ++ "}"
         TextMap t -> "(TextMap " ++ show t ++ ")"
         Ref name -> showRef name
-        Refined t _ -> "(Refined " ++ show t ++ ")"
+        Refined t p -> "(" ++ show t ++ " <{ " ++ show p ++ " }>)"
         Or a b c -> "(" ++ show a ++ bar ++ show b ++ ")" where
             bar = " " ++ showOr c ++ " "
 
-instance {-# Overlapping #-} (ShowRef r, ShowOr c) => Show (Fix (TyRep r p c)) where
+instance {-# Overlapping #-} (ShowRef r, Show p, ShowOr c) => Show (Fix (TyRep r p c)) where
     show (Fix tr) = show tr
 
 class ShowRef a where
@@ -268,6 +268,36 @@ data BinOp
 data UnaOp
     = LenOp | NotOp
     deriving (Eq, Ord)
+
+instance Show Expr where
+    show expr = case expr of
+        It -> "it"
+        Dot e k -> show e ++ (if isIdentifier k then "." ++ k else "[" ++ show k ++ "]")
+        Idx e i -> show e ++ "[" ++ show i ++ "]"
+        Lit d -> show d
+        Ifx e1 op e2 -> "(" ++ show e1 ++ " " ++ show op ++ " " ++ show e2 ++ ")"
+        Pfx op e -> "(" ++ show op ++ " " ++ show e ++ ")"
+
+instance Show BinOp where
+    show op = case op of
+        EqOp -> "="
+        NeOp -> "!="
+        LtOp -> "<"
+        GtOp -> ">"
+        LeOp -> "<="
+        GeOp -> ">="
+        AddOp -> "+"
+        SubOp -> "-"
+        MulOp -> "*"
+        DivOp -> "/"
+        ModOp -> "%"
+        AndOp -> "and"
+        OrOp -> "or"
+
+instance Show UnaOp where
+    show op = case op of
+        LenOp -> "len"
+        NotOp -> "not"
 
 evalExpr :: Expr -> JsonData -> JsonData
 evalExpr expr d = case expr of

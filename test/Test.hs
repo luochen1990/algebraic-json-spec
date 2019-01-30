@@ -6,7 +6,7 @@
 {-# language TypeSynonymInstances #-}
 {-# language FlexibleInstances #-}
 
---import Debug.Trace
+import Debug.Trace
 import qualified Data.Map as M
 import Data.List
 import Data.Fix
@@ -142,10 +142,18 @@ main = hspec $ do
               deserializeJ M.empty sp (serializeJ M.empty sp d) === d
 
     describe "DSL" $ do
+      prop "parseExpr <> show == identity" $
+        \(sp :: Spec) ->
+          forAll (arbPropAbout sp) $ \e ->
+            (parseExpr (show e)) === (Right e :: Either String Expr)
+
+      prop "parseJsonData <> show == identity" $
+        \(d :: JsonData) ->
+          (parseJsonData (show d)) === (Right d :: Either String JsonData)
+
       prop "parseSpec <> show == identity" $
         \(sp :: Spec) ->
-          isDeterminateShape (toShape' sp) ==>
-            show (parseSpec (show sp)) === show (Right sp :: Either String Spec)
+          (parseSpec (show sp)) === (Right sp :: Either String Spec)
 
     describe "AlgebraicAJS" $ do
       prop "fromJson <> toJson == identity" $
@@ -198,7 +206,7 @@ test_simple_examples = do
     show (tryMatchSpec env spec4 data4) `shouldBe` "Right (UnMatched (StepCause OrNotMatchLeft (StepCause (ObjectFieldNotMatch \"y\") (StepCause (ObjectFieldNotMatch \"w\") (DirectCause OutlineNotMatch Number \"3\")))))"
     show (tryMatchSpec M.empty (tuple' [number, cnull]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
     show (tryMatchSpec M.empty (tuple' [number, cnull] <|||> tuple [cnumber 1, cnumber 1]) (JsonArray [JsonNumber 2])) `shouldBe` "Right Matched"
-    show (checkSpec M.empty (tuple' [refined cnull (Lit (JsonBoolean False))] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure [(Refined Null), *] [] [])"
+    show (checkSpec M.empty (tuple' [refined cnull (Lit (JsonBoolean False))] <|||> tuple [])) `shouldBe` "Left (ExistOverlappingOr Unsure [(Null <{ False }>), *] [] [])"
 
 -- test data
 
