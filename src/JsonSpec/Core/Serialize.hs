@@ -58,7 +58,7 @@ instance Serial JsonData where
             6 -> JsonObject <$> deserialList
 
 serializeJ :: Env CSpec -> CSpec -> JsonData -> ByteString
-serializeJ env spec d = runPutS (seri spec d)
+serializeJ env spec d = runPutS (putWord8 0 >> seri spec d)
     where
         seri :: CSpec -> JsonData -> Put
         seri (Fix tr) d = case (tr, d) of
@@ -90,7 +90,7 @@ serializeJ env spec d = runPutS (seri spec d)
             _ -> error "not match"
 
 deserializeJ :: Env CSpec -> CSpec -> ByteString -> JsonData
-deserializeJ env spec bs = case runGetS (deseri spec) bs of
+deserializeJ env spec bs = case runGetS (getWord8 >> deseri spec) bs of
     Left msg -> error ("deserializeJ failed: " ++ msg)
     Right r -> r
     where
