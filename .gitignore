@@ -2,4 +2,5 @@
 *.cabal
 *.bak
 *.log
+*.lock
 *~
