@@ -96,13 +96,13 @@ shapeOverlap shape1@(Fix tr1) shape2@(Fix tr2) = case (tr1, tr2) of
                     blurWith (foldMap (sureness . snd) psMayNull) (extendOverlappingEvidenceObj sndOnly joinCommonParts)
             (Tolerant, Tolerant) ->
                 extendOverlappingEvidenceObj (fstOnly ++ sndOnly) joinCommonParts
-    (Object s1 ps1, TextMap t2) ->
+    (Object s1 ps1, Dict t2) ->
         let s = sureness shape1 <> sureness shape2
         in blurWith s $ joinObjectComponents [(k, shapeOverlap t1 t2, MatchRight) | (k, t1) <- ps1, s1 == Strict || not (acceptNull t1)]
-    (TextMap t1, Object s2 ps2) ->
+    (Dict t1, Object s2 ps2) ->
         let s = sureness shape1 <> sureness shape2
         in blurWith s $ joinObjectComponents [(k, shapeOverlap t1 t2, MatchLeft) | (k, t2) <- ps2, s2 == Strict || not (acceptNull t2)]
-    (TextMap t1, TextMap t2) ->
+    (Dict t1, Dict t2) ->
         Overlapping Sure (JsonObject []) -- trivial case
     (Or t1 t2 _, t3) ->
         joinLeftOrPath (shapeOverlap t1 (Fix t3)) (shapeOverlap t2 (Fix t3))
@@ -229,7 +229,7 @@ matchSpec env spec@(Fix t) d = let rec = matchSpec env in case (t, d) of
         fold [wrapMR (ObjectFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
     (Object Tolerant ps, d@(JsonObject kvs)) ->
         fold [wrapMR (ObjectFieldNotMatch k) (rec t (lookupObj' k d)) | (k, t) <- ps]
-    (TextMap t, (JsonObject kvs)) -> fold [wrapMR (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
+    (Dict t, (JsonObject kvs)) -> fold [wrapMR (TextMapElementNotMatch k) (rec t v) | (k, v) <- kvs]
     (t@(Refined t1 p), d) -> wrapMR RefinedShapeNotMatch (rec t1 d) <> (testProp p d `elseReport` (DirectCause RefinedPropNotMatch spec d))
     (t@(Or t1 t2 c), d) -> case makeChoice c d of
         MatchLeft -> wrapMR OrNotMatchLeft (rec t1 d)
@@ -251,7 +251,7 @@ everywhereJ env spec name g dat = rec spec dat where
         (Tuple _ ts, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | (t, x) <- zip ts xs]) >>= g
         (Array t, (JsonArray xs)) -> (JsonArray <$> sequence [rec t x | x <- xs]) >>= g
         (Object _ ps, d@(JsonObject _)) -> (JsonObject <$> sequence [(k,) <$> rec t (lookupObj' k d) | (k, t) <- ps]) >>= g --NOTE: use everywhereJ will remove redundant keys
-        (TextMap t, (JsonObject kvs)) -> (JsonObject <$> sequence [(k,) <$> rec t v | (k, v) <- kvs]) >>= g
+        (Dict t, (JsonObject kvs)) -> (JsonObject <$> sequence [(k,) <$> rec t v | (k, v) <- kvs]) >>= g
         (Refined t _, d) -> rec t d
         (Or t1 t2 c, d) -> case makeChoice c d of
             MatchLeft -> rec t1 d

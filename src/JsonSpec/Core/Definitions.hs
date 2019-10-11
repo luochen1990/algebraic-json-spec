@@ -76,7 +76,7 @@ data TyRep r p c tr' =
     | Tuple Strictness [tr']
     | Array tr'
     | Object Strictness [(String, tr')]
-    | TextMap tr'
+    | Dict tr'
     | Ref r
     | Refined tr' p
     | Or tr' tr' c
@@ -110,7 +110,7 @@ instance (Eq r, Eq p, Eq c, Eq tr') => Eq (TyRep r p c tr') where
         (Tuple s1 ts1, Tuple s2 ts2) -> s1 == s2 && ts1 == ts2
         (Array t1, Array t2) -> t1 == t2
         (Object s1 ps1, Object s2 ps2) -> s1 == s2 && ps1 == ps2
-        (TextMap t1, TextMap t2) -> t1 == t2
+        (Dict t1, Dict t2) -> t1 == t2
         (Ref r1, Ref r2) -> r1 == r2
         (Refined t1 p1, Refined t2 p2) -> t1 == t2 && p1 == p2
         (Or a1 b1 c1, Or a2 b2 c2) -> a1 == a2 && b1 == b2 && c1 == c2
@@ -141,7 +141,7 @@ instance QuadFunctor TyRep where
         Tuple s ts -> Tuple s (map f4 ts)
         Array t -> Array (f4 t)
         Object s ps -> Object s [(k, f4 v) | (k, v) <- ps]
-        TextMap t -> TextMap (f4 t)
+        Dict t -> Dict (f4 t)
         Ref name -> Ref (f1 name)
         Refined t p -> Refined (f4 t) (f2 p)
         Or t1 t2 c -> Or (f4 t1) (f4 t2) (f3 c)
@@ -154,7 +154,7 @@ instance Foldable (TyRep r p c) where
         Tuple s ts -> foldMap f ts
         Array t -> f t
         Object s ps -> foldMap (f . snd) ps
-        TextMap t -> f t
+        Dict t -> f t
         Refined t _ -> f t
         Or t1 t2 _ -> f t1 `mappend` f t2
         _ -> mempty
@@ -173,7 +173,7 @@ instance Traversable (TyRep r p c) where
         Tuple s ts -> Tuple s <$> (traverse f ts)
         Array t -> Array <$> f t
         Object s ps -> Object s <$> sequenceA [(k,) <$> f v | (k, v) <- ps]
-        TextMap t -> TextMap <$> f t
+        Dict t -> Dict <$> f t
         Refined t p -> Refined <$> f t <*> pure p
         Or t1 t2 c -> Or <$> (f t1) <*> (f t2) <*> pure c
 
@@ -200,7 +200,7 @@ instance (ShowRef r, Show p, ShowOr c, Show tr') => Show (TyRep r p c tr') where
         Array t -> "(Array " ++ show t ++ ")"
         Object Strict ps -> "{" ++ intercalate ", " [showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ "}"
         Object Tolerant ps -> "{" ++ intercalate ", " ([showIdentifier k ++ ": " ++ show t | (k, t) <- ps] ++ ["*"]) ++ "}"
-        TextMap t -> "(TextMap " ++ show t ++ ")"
+        Dict t -> "(Dict " ++ show t ++ ")"
         Ref name -> showRef name
         Refined t p -> "(" ++ show t ++ " <{ " ++ show p ++ " }>)"
         Or a b c -> "(" ++ show a ++ bar ++ show b ++ ")" where
@@ -455,7 +455,7 @@ toOutline (Fix tr) = case tr of
     Tuple _ _ -> ArrayOL
     Array _ -> ArrayOL
     Object _ _ -> ObjectOL
-    TextMap _ -> ObjectOL
+    Dict _ -> ObjectOL
     Ref _ -> AnythingOL
     Refined t _ -> toOutline t
     Or a b c -> AnythingOL
@@ -508,7 +508,7 @@ isDeterminateShape = cata f where
         Tuple _ ts -> and ts
         Array t -> t
         Object _ ps -> and (map snd ps)
-        TextMap t -> t
+        Dict t -> t
         Ref _ -> False -- blackbox item
         Refined t _ -> False -- blackbox item
         Or a b _ -> a && b
@@ -539,7 +539,7 @@ example (Fix tr) = case tr of
     Tuple _ ts -> JsonArray (map example ts)
     Array t -> JsonArray [(example t)]
     Object _ ps -> JsonObject [(k, example t) | (k, t) <- ps]
-    TextMap t -> JsonObject [("k", example t)]
+    Dict t -> JsonObject [("k", example t)]
     Ref _ -> JsonNull --NOTE: not a rigorous example
     Refined t _ -> example t --NOTE: not a rigorous example
     Or a b _ -> example a

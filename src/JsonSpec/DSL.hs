@@ -35,7 +35,7 @@ pName = some alphaNumChar
 
 pSpec :: Parser Spec
 pSpec = makeExprParser (pSpec') [
-    [ Prefix ((toks "Array") $> array) , Prefix (toks "TextMap" $> textmap)],
+    [ Prefix ((toks "Array") $> array) , Prefix (toks "Dict" $> dict)],
     [ Postfix ((toks "<{" *> pExpr <* toks "}>") >>= \p -> pure (\sp -> Fix (Refined sp p)))],
     [ InfixR (try (optional (try (space >> newline)) *> (toks "|?" <|> tok '|')) $> (<|||>)) ]
     ]
@@ -172,11 +172,11 @@ sepBy :: Parser a -> Parser b -> Parser [a]
 sepBy p op = liftM2 (:) p (many (try (op *> p))) <|> pure []
 
 
-s1 = "([[(TextMap (Null |? True)), (Array Null)], *] <{ ((len it[0][1]) < 42.0) }>)"
-s2 = "([[(TextMap Null), (Array Null)], *] <{ ((len it[0][1]) < 42.0) }>)"
-s3 = "([[(TextMap Null)], *] <{ ((len it[0][1]) < 42.0) }>)"
-s4 = "([(TextMap Null), *] <{ ((len it[0][1]) < 42.0) }>)"
-s5 = "([TextMap Null, *] <{ ((len it[0][1]) < 42.0) }>)"
+s1 = "([[(Dict (Null |? True)), (Array Null)], *] <{ ((len it[0][1]) < 42.0) }>)"
+s2 = "([[(Dict Null), (Array Null)], *] <{ ((len it[0][1]) < 42.0) }>)"
+s3 = "([[(Dict Null)], *] <{ ((len it[0][1]) < 42.0) }>)"
+s4 = "([(Dict Null), *] <{ ((len it[0][1]) < 42.0) }>)"
+s5 = "([Dict Null, *] <{ ((len it[0][1]) < 42.0) }>)"
 s6 = "([Null, *] <{ ((len it[0][1]) < 42.0) }>)"
 s7 = "(Null <{ ((len it[0][1]) < 42.0) }>)"
 s8 = "(Null <{ ((len it[0][1]) < 1.0) }>)"

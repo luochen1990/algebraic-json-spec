@@ -38,7 +38,7 @@ instance JsonSerial Spec where
         Array t -> JsonArray [tag "Array", (toJson t)]
         Object Strict ps -> JsonObject [(k, toJson t) | (k, t) <- ps]
         Object Tolerant ps -> JsonObject ([(k, toJson t) | (k, t) <- ps] ++ [("*", tag "Tolerant")])
-        TextMap t -> JsonArray [tag "TextMap", (toJson t)]
+        Dict t -> JsonArray [tag "Dict", (toJson t)]
         Ref name -> JsonText ('$':name)
         Refined t p -> JsonArray [tag "Refined", (toJson t)]
         Or a b _ -> JsonArray [tag "Or", (toJson a), (toJson b)]
@@ -60,7 +60,7 @@ instance JsonSerial Spec where
         JsonArray xs -> case xs of
             (JsonText "#Lit" : (JsonText s) : []) -> pure (Fix $ ConstText s)
             (JsonText "#Array" : x : []) -> pure (Fix $ Array (fromJson x))
-            (JsonText "#TextMap" : x : []) -> pure (Fix $ TextMap (fromJson x))
+            (JsonText "#Dict" : x : []) -> pure (Fix $ Dict (fromJson x))
             (JsonText "#Refined" : x : _) -> pure (Fix $ Refined (fromJson x) undefined)
             (JsonText "#Or" : x : y : []) -> pure (Fix $ Or (fromJson x) (fromJson y) ())
             _ ->
@@ -86,11 +86,11 @@ aajs = env where
                 | Boolean )
             | (   ["#Lit", Text]
                 | ["#Array", JsonSpec]
-                | ["#TextMap", JsonSpec]
+                | ["#Dict", JsonSpec]
                 | ["#Refined", JsonSpec]
                 | ["#Or", JsonSpec, JsonSpec] )
             | Array (JsonSpec | "#Tolerant")
-            | TextMap (JsonSpec | "#Tolerant")
+            | Dict (JsonSpec | "#Tolerant")
         |]
 
     decs = either error id (parseFile textInput)

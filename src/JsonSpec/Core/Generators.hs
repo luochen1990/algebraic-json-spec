@@ -88,7 +88,7 @@ arbPropAbout spec = sized (arb' spec) where
       (k, t) <- elements ps
       p <- arb' t (max 0 (n-1))
       pure (injectExpr (Dot It k) p)
-    TextMap t -> pure (Ifx (Pfx LenOp It) LtOp (Lit (JsonNumber 42)))
+    Dict t -> pure (Ifx (Pfx LenOp It) LtOp (Lit (JsonNumber 42)))
     Refined t _ -> pure (Lit (JsonBoolean True))
     Ref name -> pure (Lit (JsonBoolean True))
     Or t1 t2 _ -> pure (Lit (JsonBoolean True))
@@ -103,7 +103,7 @@ instance Arbitrary Spec where
       Fix <$> (Tuple <$> arbitrary <*> (arbNat >>= \m -> vectorOf m (tree' ((n-1) `div` m)))),
       Fix <$> (Array <$> (tree' (n-1))),
       Fix <$> (Object <$> arbitrary <*> (arbNat >>= \m -> arbMap m arbKey (tree' ((n-1) `div` m)))),
-      Fix <$> (TextMap <$> (tree' (n-1))),
+      Fix <$> (Dict <$> (tree' (n-1))),
       Fix <$> (do
         k <- arbNatSized (n-1)
         sp <- tree' (n-1-k)
@@ -114,7 +114,7 @@ instance Arbitrary Spec where
     Tuple s ts -> Fix Null : ts ++ [Fix $ Tuple s ts' | ts' <- shrinkList shrink ts] ++ [Fix $ Tuple Strict ts | s == Tolerant]
     Array t -> Fix Null : t : [Fix $ Array t' | t' <- shrink t]
     Object s ps -> Fix Null : map snd ps ++ [Fix $ Object s ps' | ps' <- shrinkList shrinkSnd ps] ++ [Fix $ Object Strict ps | s == Tolerant]
-    TextMap t -> Fix Null : t : [Fix $ TextMap t' | t' <- shrink t]
+    Dict t -> Fix Null : t : [Fix $ Dict t' | t' <- shrink t]
     Refined t p -> Fix Null : t : [Fix $ Refined t' (Lit (JsonBoolean True)) | t' <- [t | p /= (Lit (JsonBoolean True))] ++ shrink t]
     Or t1 t2 _ -> Fix Null : [t1, t2] ++ [Fix $ Or t1' t2' () | (t1', t2') <- shrink (t1, t2)]
     ConstNumber x -> Fix Null : [Fix $ ConstNumber 1 | x /= 1]
@@ -153,7 +153,7 @@ arbitraryJ spec@(Fix tr) = sized (tree' tr) where
             ps1' = ps1 ++ ps1_
             ps2' = drop n2 ps2
         in tree' (Object Strict (ps1' ++ ps2')) (max 0 (n-1-n1))
-    TextMap (Fix t) -> arbNatSized (min 3 n) >>= \m -> JsonObject <$> arbMap m arbKey (tree' t (max 0 (n-m-1) `div` m))
+    Dict (Fix t) -> arbNatSized (min 3 n) >>= \m -> JsonObject <$> arbMap m arbKey (tree' t (max 0 (n-m-1) `div` m))
     Refined (Fix t) p -> tree' t (max 0 (n-1)) `suchThat` testProp p
     Ref name -> error "arbitraryJ should not be used on Ref"
     Or (Fix a) (Fix b) _ -> oneof [tree' a n, tree' b n]

@@ -14,8 +14,8 @@ object, object' :: [(Name, Spec)] -> Spec
 object ps = Fix (Object Strict ps)
 object' ps = Fix (Object Tolerant ps)
 
-textmap, array :: Spec -> Spec
-textmap t = Fix (TextMap t)
+dict, array :: Spec -> Spec
+dict t = Fix (Dict t)
 array t = Fix (Array t)
 
 boolean, number, text, cnull :: Spec

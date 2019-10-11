@@ -80,7 +80,7 @@ serializeJ env spec d = runPutS (putWord8 0 >> seri spec d)
                     in sequence_ [seri t (mp M.! k) | (k, t) <- ps']
                 else error "not match"
             (Object Tolerant ps, (JsonObject kvs)) -> serialList kvs --TODO: optmize
-            (TextMap t, (JsonObject kvs)) -> serialize (VarInt (length kvs)) >> sequence_ [serialize k >> seri t v | (k, v) <- kvs]
+            (Dict t, (JsonObject kvs)) -> serialize (VarInt (length kvs)) >> sequence_ [serialize k >> seri t v | (k, v) <- kvs]
             (Refined t _, _) -> seri t d
             (Ref r, _) -> seri (env M.! r) d
             (Or a b c, _) -> case makeChoice c d of
@@ -113,7 +113,7 @@ deserializeJ env spec bs = case runGetS (getWord8 >> deseri spec) bs of
                 let ps' = sortWith fst ps
                 in JsonObject <$> sequence [liftM2 (,) (pure k) (deseri t) | (k, t) <- ps']
             Object Tolerant ps -> JsonObject <$> deserialList --TODO: optmize
-            TextMap t -> do
+            Dict t -> do
                 (VarInt n) <- deserialize
                 kvs <- replicateM n (liftM2 (,) deserialize (deseri t))
                 return $ JsonObject kvs
